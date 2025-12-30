@@ -58,18 +58,11 @@ class KeywordsReplyPlugin(Star):
         return None
 
     def _is_admin(self, event: AstrMessageEvent):
-        sender_id = event.get_sender_id()
-        role = event.get_sender_role()
-        if role == "admin" or role == "owner":
+        if event.is_admin():
             return True
+        sender_id = event.get_sender_id()
         whitelist = self.config.get("whitelist", [])
         return sender_id in whitelist
-
-    def _get_group_id(self, event: AstrMessageEvent):
-        try:
-            return event.message_obj.group_id
-        except:
-            return None
 
     def _parse_message_to_entry(self, components):
         text_parts = []
@@ -121,11 +114,11 @@ class KeywordsReplyPlugin(Star):
                 if path:
                     full_path = os.path.join(self.image_dir, path)
                     if os.path.exists(full_path):
-                        chain.append(Image.fromFileSystem(full_path))
+                        chain.append(Image(file=full_path))
                     else:
                         logger.warning(f"图片文件不存在: {full_path}")
                 elif img.get("url"):
-                    chain.append(Image.fromURL(img["url"]))
+                    chain.append(Image(url=img["url"]))
 
             if not chain:
                 logger.warning(f"回复内容为空。Entry: {entry}")
@@ -172,18 +165,18 @@ class KeywordsReplyPlugin(Star):
             yield res
 
     @filter.command("删除关键词")
-    async def del_keyword_cmd(self, event: AstrMessageEvent, *args):
-        async for res in self.cmd_module.del_items(event, args):
+    async def del_keyword_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.del_items(event):
             yield res
 
     @filter.command("启用关键词")
-    async def enable_keyword_cmd(self, event: AstrMessageEvent, idx: int, *group_ids):
-        async for res in self.cmd_module.toggle_groups(event, idx, group_ids, True):
+    async def enable_keyword_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.toggle_groups(event, True):
             yield res
 
     @filter.command("禁用关键词")
-    async def disable_keyword_cmd(self, event: AstrMessageEvent, idx: int, *group_ids):
-        async for res in self.cmd_module.toggle_groups(event, idx, group_ids, False):
+    async def disable_keyword_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.toggle_groups(event, False):
             yield res
 
     @filter.command("查看所有关键词")
@@ -192,8 +185,8 @@ class KeywordsReplyPlugin(Star):
             yield res
 
     @filter.command("删除关键词词条")
-    async def del_keyword_entry_cmd(self, event: AstrMessageEvent, idx: int, entry_idx: int):
-        async for res in self.cmd_module.delete_entry(event, idx, entry_idx):
+    async def del_keyword_entry_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.delete_entry(event):
             yield res
 
     # 检测词指令
@@ -208,18 +201,18 @@ class KeywordsReplyPlugin(Star):
             yield res
 
     @filter.command("删除检测词")
-    async def del_detect_cmd(self, event: AstrMessageEvent, *args):
-        async for res in self.detect_module.del_items(event, args):
+    async def del_detect_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.del_items(event):
             yield res
 
     @filter.command("启用检测词")
-    async def enable_detect_cmd(self, event: AstrMessageEvent, idx: int, *group_ids):
-        async for res in self.detect_module.toggle_groups(event, idx, group_ids, True):
+    async def enable_detect_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.toggle_groups(event, True):
             yield res
 
     @filter.command("禁用检测词")
-    async def disable_detect_cmd(self, event: AstrMessageEvent, idx: int, *group_ids):
-        async for res in self.detect_module.toggle_groups(event, idx, group_ids, False):
+    async def disable_detect_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.toggle_groups(event, False):
             yield res
 
     @filter.command("查看所有检测词")
@@ -228,8 +221,8 @@ class KeywordsReplyPlugin(Star):
             yield res
 
     @filter.command("删除检测词词条")
-    async def del_detect_entry_cmd(self, event: AstrMessageEvent, idx: int, entry_idx: int):
-        async for res in self.detect_module.delete_entry(event, idx, entry_idx):
+    async def del_detect_entry_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.delete_entry(event):
             yield res
 
     # 通用管理指令
@@ -238,7 +231,8 @@ class KeywordsReplyPlugin(Star):
         msg = event.message_str.strip()
         if not msg: return
         
-        management_prefixes = ["/添加", "/编辑", "/删除", "/启用", "/禁用", "/查看"]
+        # 统一处理：管理指令跳过（由 @filter.command 处理）
+        management_prefixes = ["/添加", "/编辑", "/删除", "/启用", "/禁用", "/查看", "添加", "编辑", "删除", "启用", "禁用", "查看"]
         if any(msg.startswith(p) for p in management_prefixes):
             return
             

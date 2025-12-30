@@ -31,16 +31,17 @@ class CommandTriggeredModule:
             return text == keyword
 
     async def handle_message(self, event: AstrMessageEvent):
-        msg = event.message_str.strip()
-        if not msg.startswith(("/", "!", "／")):
+        # 使用 AstrBot 原生指令识别逻辑
+        if not event.is_at_or_wake_command:
             return None
             
-        content = msg[1:].strip()
-        if not content:
+        # 此时 message_str 应该是去掉前缀后的内容，例如 "菜单" 或 "菜单 参数"
+        msg_str = event.message_str.strip()
+        if not msg_str:
             return None
             
-        potential_cmd = content.split()[0]
-        group_id = self.plugin._get_group_id(event)
+        potential_cmd = msg_str.split()[0]
+        group_id = event.get_group_id()
         
         for cfg in self.plugin.data[self.data_key]:
             if self._match_keyword(potential_cmd, cfg):
@@ -57,16 +58,37 @@ class CommandTriggeredModule:
             yield event.plain_result("权限不足。")
             return
 
-        full_msg = event.message_str
-        cmd_pattern = r"/添加关键词\s+(-r\s+)?(\S+)\s*(.*)"
-        match = re.match(cmd_pattern, full_msg, re.DOTALL)
-        if not match:
+        # 移除指令名，获取参数部分
+        full_text = event.message_str.strip()
+        parts = full_text.split(None, 1)
+        if len(parts) < 2:
+            yield event.plain_result("格式错误。用法: /添加关键词 [-r] <关键词> <回复内容>")
+            return
+            
+        args_text = parts[1].lstrip()
+        
+        is_regex = False
+        if args_text.startswith("-r"):
+            is_regex = True
+            args_text = args_text[2:].lstrip()
+            
+        if not args_text:
             yield event.plain_result("格式错误。用法: /添加关键词 [-r] <关键词> <回复内容>")
             return
 
-        is_regex = bool(match.group(1))
-        keyword = match.group(2)
-        
+        # 提取关键词和回复内容，只拆分第一个空白字符（空格或换行）
+        match = re.search(r'\s+', args_text)
+        if match:
+            keyword = args_text[:match.start()]
+            remaining = args_text[match.end():]
+        else:
+            keyword = args_text
+            remaining = ""
+
+        if not keyword:
+            yield event.plain_result("关键词不能为空。")
+            return
+
         # 验证正则合法性
         if is_regex:
             if not self.plugin._is_safe_regex(keyword):
@@ -78,18 +100,30 @@ class CommandTriggeredModule:
                 yield event.plain_result(f"无效的正则表达式: {e}")
                 return
 
+        # 构建回复内容组件
         components = event.get_messages()
         reply_components = []
         
+        # 第一个组件包含指令和关键词，我们需要提取出后面的回复文本
         first_comp = components[0]
         if isinstance(first_comp, Plain):
             text = first_comp.text
-            idx = text.find(keyword)
-            if idx != -1:
-                after_keyword = text[idx + len(keyword):].lstrip()
-                if after_keyword:
-                    reply_components.append(Plain(after_keyword))
-            reply_components.extend(components[1:])
+            # 回复内容在第一个组件中的起始位置
+            if remaining:
+                # 寻找关键词后的第一个 remaining，防止关键词和回复内容相同时找错位置
+                k_idx = text.find(keyword)
+                search_start = k_idx + len(keyword) if k_idx != -1 else 0
+                r_idx = text.find(remaining, search_start)
+                if r_idx != -1:
+                    reply_components.append(Plain(text[r_idx:]))
+                elif k_idx != -1:
+                    # 如果 remaining 不在第一个组件（可能跨组件），则尝试获取 keyword 之后的所有内容
+                    after_keyword = text[search_start:].lstrip()
+                    if after_keyword:
+                        reply_components.append(Plain(after_keyword))
+        
+        # 添加后续所有组件（如图片、表情等）
+        reply_components.extend(components[1:])
         
         entry, has_image = self.plugin._parse_message_to_entry(reply_components)
         if not entry.get("text") and not entry.get("images"):
@@ -131,16 +165,35 @@ class CommandTriggeredModule:
             yield event.plain_result("权限不足。")
             return
             
-        full_msg = event.message_str
-        cmd_pattern = r"/编辑关键词\s+(-r\s+)?(\d+)\s+(\S+)"
-        match = re.match(cmd_pattern, full_msg)
-        if not match:
+        msg_parts = event.message_str.strip().split()
+        # 格式可能为:
+        # 1. /编辑关键词 序号 新关键词 -> ['/编辑关键词', '序号', '新关键词']
+        # 2. /编辑关键词 -r 序号 新关键词 -> ['/编辑关键词', '-r', '序号', '新关键词']
+
+        if len(msg_parts) < 3:
             yield event.plain_result("格式错误。用法: /编辑关键词 [-r] <序号> <新关键词>")
             return
-            
-        is_regex = bool(match.group(1))
-        idx = int(match.group(2)) - 1
-        new_keyword = match.group(3)
+
+        is_regex = False
+        idx_str = ""
+        new_keyword = ""
+
+        if msg_parts[1] == "-r":
+            is_regex = True
+            if len(msg_parts) < 4:
+                yield event.plain_result("格式错误。用法: /编辑关键词 -r <序号> <新关键词>")
+                return
+            idx_str = msg_parts[2]
+            new_keyword = msg_parts[3]
+        else:
+            idx_str = msg_parts[1]
+            new_keyword = msg_parts[2]
+
+        try:
+            idx = int(idx_str) - 1
+        except ValueError:
+            yield event.plain_result("序号必须是数字。")
+            return
         
         if is_regex:
             try:
@@ -159,12 +212,18 @@ class CommandTriggeredModule:
         else:
             yield event.plain_result("序号无效。")
 
-    async def del_items(self, event, args):
+    async def del_items(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
             return
+            
+        parts = event.message_str.strip().split()
+        if len(parts) < 2:
+            yield event.plain_result("格式错误。用法: /删除关键词 <序号1> <序号2> ...")
+            return
+            
         try:
-            indices = [int(a) - 1 for a in args]
+            indices = [int(a) - 1 for a in parts[1:]]
             indices.sort(reverse=True)
             deleted_keywords = []
             for idx in indices:
@@ -177,37 +236,59 @@ class CommandTriggeredModule:
                 yield event.plain_result(f"已删除 {len(deleted_keywords)} 个关键词。")
             else:
                 yield event.plain_result("未找到有效的序号。")
-        except:
-            yield event.plain_result("格式错误。用法: /删除关键词 <序号1> <序号2> ...")
+        except ValueError:
+            yield event.plain_result("序号必须是数字。")
+        except Exception as e:
+            logger.error(f"删除关键词异常: {e}")
+            yield event.plain_result(f"操作失败: {e}")
 
-    async def toggle_groups(self, event, idx, group_ids, enable):
+    async def toggle_groups(self, event: AstrMessageEvent, enable: bool):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
             return
             
-        idx -= 1
-        if 0 <= idx < len(self.plugin.data[self.data_key]):
-            cfg = self.plugin.data[self.data_key][idx]
-            if "enabled_groups" not in cfg: cfg["enabled_groups"] = []
+        parts = event.message_str.strip().split()
+        if len(parts) < 2:
+            cmd_name = "启用" if enable else "禁用"
+            yield event.plain_result(f"格式错误。用法: /{cmd_name}关键词 <序号> [群号1] [群号2] ...")
+            return
             
-            for gid in group_ids:
-                if enable:
-                    if gid not in cfg["enabled_groups"]:
-                        cfg["enabled_groups"].append(gid)
+        try:
+            idx = int(parts[1]) - 1
+            group_ids = parts[2:]
+            
+            if 0 <= idx < len(self.plugin.data[self.data_key]):
+                cfg = self.plugin.data[self.data_key][idx]
+                if "enabled_groups" not in cfg: cfg["enabled_groups"] = []
+                
+                if not group_ids:
+                    # 如果没传群号，启用则清空限制（全群），禁用则不做操作或提示
+                    if enable:
+                        cfg["enabled_groups"] = []
+                    else:
+                        yield event.plain_result("请指定要禁用的群号。")
+                        return
                 else:
-                    if gid in cfg["enabled_groups"]:
-                        cfg["enabled_groups"].remove(gid)
-            
-            self.plugin._save_data()
-            status = "已启用" if enable else "已禁用"
-            groups_str = ", ".join(group_ids) if group_ids else "所有群聊 (清除限制)"
-            logger.info(f"修改关键词群聊限制: {cfg['keyword']} -> {status} {groups_str} (操作者: {event.get_sender_id()})")
-            yield event.plain_result(f"关键词 '{cfg['keyword']}' {status} 群聊: {groups_str}")
-        else:
-            yield event.plain_result("序号无效。")
+                    for gid in group_ids:
+                        if enable:
+                            if gid not in cfg["enabled_groups"]:
+                                cfg["enabled_groups"].append(gid)
+                        else:
+                            if gid in cfg["enabled_groups"]:
+                                cfg["enabled_groups"].remove(gid)
+                
+                self.plugin._save_data()
+                status = "已启用" if enable else "已禁用"
+                groups_str = ", ".join(group_ids) if group_ids else "所有群聊 (清除限制)"
+                logger.info(f"修改关键词群聊限制: {cfg['keyword']} -> {status} {groups_str} (操作者: {event.get_sender_id()})")
+                yield event.plain_result(f"关键词 '{cfg['keyword']}' {status} 群聊: {groups_str}")
+            else:
+                yield event.plain_result("序号无效。")
+        except ValueError:
+            yield event.plain_result("序号必须是数字。")
 
     async def list_items(self, event):
-        res = "关键词列表 (command_triggered):\n"
+        res = "关键词列表 (指令触发):\n"
         if not self.plugin.data[self.data_key]:
             res += "无\n"
         else:
@@ -221,24 +302,35 @@ class CommandTriggeredModule:
                     res += f"  └─ {j}. {content[:50]}{'...' if len(content) > 50 else ''}\n"
         yield event.plain_result(res.strip())
 
-    async def delete_entry(self, event: AstrMessageEvent, idx: int, entry_idx: int):
+    async def delete_entry(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
             return
-        
-        if 1 <= idx <= len(self.plugin.data[self.data_key]):
-            keyword_cfg = self.plugin.data[self.data_key][idx-1]
-            if 1 <= entry_idx <= len(keyword_cfg["entries"]):
-                keyword_cfg["entries"].pop(entry_idx-1)
-                keyword = keyword_cfg["keyword"]
-                if not keyword_cfg["entries"]:
-                    self.plugin.data[self.data_key].pop(idx-1)
-                    logger.info(f"关键词 {keyword} 已无词条，自动删除关键词。")
-                
-                self.plugin._save_data()
-                logger.info(f"删除关键词词条: {keyword} 序号 {idx}, 词条序号 {entry_idx} (操作者: {event.get_sender_id()})")
-                yield event.plain_result(f"已删除关键词 '{keyword}' 的第 {entry_idx} 个词条。")
+            
+        parts = event.message_str.strip().split()
+        if len(parts) < 3:
+            yield event.plain_result("格式错误。用法: /删除关键词词条 <关键词序号> <词条序号>")
+            return
+            
+        try:
+            idx = int(parts[1]) - 1
+            entry_idx = int(parts[2]) - 1
+            
+            if 0 <= idx < len(self.plugin.data[self.data_key]):
+                keyword_cfg = self.plugin.data[self.data_key][idx]
+                if 0 <= entry_idx < len(keyword_cfg["entries"]):
+                    keyword_cfg["entries"].pop(entry_idx)
+                    keyword = keyword_cfg["keyword"]
+                    if not keyword_cfg["entries"]:
+                        self.plugin.data[self.data_key].pop(idx)
+                        logger.info(f"关键词 {keyword} 已无词条，自动删除关键词。")
+                    
+                    self.plugin._save_data()
+                    logger.info(f"删除关键词词条: {keyword} 序号 {idx+1}, 词条序号 {entry_idx+1} (操作者: {event.get_sender_id()})")
+                    yield event.plain_result(f"已删除关键词 '{keyword}' 的第 {entry_idx+1} 个词条。")
+                else:
+                    yield event.plain_result("词条序号无效。")
             else:
-                yield event.plain_result("词条序号无效。")
-        else:
-            yield event.plain_result("关键词序号无效。")
+                yield event.plain_result("关键词序号无效。")
+        except ValueError:
+            yield event.plain_result("序号必须是数字。")
