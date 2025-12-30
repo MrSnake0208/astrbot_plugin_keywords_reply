@@ -1,0 +1,23 @@
+{
+    "whitelist": {
+        "description": "白名单用户 ID",
+        "type": "list",
+        "hint": "只有白名单用户或管理员可以管理关键词/检测词。可填写用户 ID 列表。",
+        "default": [],
+        "items": {
+            "type": "string"
+        }
+    },
+    "words_limit": {
+        "description": "每个关键词/检测词的最大词条数",
+        "type": "int",
+        "hint": "每个触发词允许配置的最大回复词条数量。",
+        "default": 10
+    },
+    "case_sensitive": {
+        "description": "是否大小写敏感",
+        "type": "bool",
+        "hint": "针对检测词匹配时是否区分大小写。",
+        "default": false
+    }
+}
