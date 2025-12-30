@@ -11,7 +11,7 @@ import hashlib
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
 
-@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图片回复、正则表达式和群聊过滤的关键词回复插件。", "v0.0.1", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
+@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图片回复、正则表达式和群聊过滤的关键词回复插件。", "v0.1.0", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
 class KeywordsReplyPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -100,15 +100,12 @@ class KeywordsReplyPlugin(Star):
         return entry
 
     def _get_reply_result(self, event: AstrMessageEvent, entry: dict):
-        """构建回复结果。不支持图文混排，采用先文本后图片的顺序。"""
         try:
             chain = []
             
-            # 1. 先添加文本
             if entry.get("text"):
                 chain.append(Plain(entry["text"]))
             
-            # 2. 后添加图片列表
             for img in entry.get("images", []):
                 path = img.get("path")
                 if path:
@@ -131,7 +128,6 @@ class KeywordsReplyPlugin(Star):
             return None
 
     def _is_safe_regex(self, pattern: str) -> bool:
-        """正则表达式安全检查，防止 ReDoS"""
         dangerous_patterns = [
             r'\(\?\:',
             r'\(\?\!',
@@ -153,7 +149,6 @@ class KeywordsReplyPlugin(Star):
                 
         return True
 
-    # 关键词指令
     @filter.command("添加关键词")
     async def add_keyword_cmd(self, event: AstrMessageEvent):
         async for res in self.cmd_module.add_item(event):
@@ -161,7 +156,20 @@ class KeywordsReplyPlugin(Star):
 
     @filter.command("编辑关键词")
     async def edit_keyword_cmd(self, event: AstrMessageEvent):
-        async for res in self.cmd_module.edit_item(event):
+        parts = event.message_str.strip().split(None, 2)
+        if len(parts) < 3:
+            yield event.plain_result("格式错误。用法: /编辑关键词 <序号或关键词内容> <新关键词>")
+            return
+            
+        param = parts[1]
+        indices = self.cmd_module._find_indices(param)
+        if not indices:
+            yield event.plain_result(f"未找到匹配 '{param}' 的关键词。")
+            return
+            
+        idx = indices[0]
+        new_keyword = parts[2]
+        async for res in self.cmd_module.edit_item(event, idx, new_keyword):
             yield res
 
     @filter.command("删除关键词")
@@ -179,17 +187,31 @@ class KeywordsReplyPlugin(Star):
         async for res in self.cmd_module.toggle_groups(event, False):
             yield res
 
-    @filter.command("查看所有关键词")
+    @filter.command("查看关键词列表")
     async def list_keywords_cmd(self, event: AstrMessageEvent):
         async for res in self.cmd_module.list_items(event):
             yield res
 
-    @filter.command("删除关键词词条")
-    async def del_keyword_entry_cmd(self, event: AstrMessageEvent):
-        async for res in self.cmd_module.delete_entry(event):
+    @filter.command("查看关键词")
+    async def view_keyword_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.view_item(event):
             yield res
 
-    # 检测词指令
+    @filter.command("编辑关键词回复")
+    async def edit_keyword_reply_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.edit_reply(event):
+            yield res
+
+    @filter.command("删除关键词回复")
+    async def del_keyword_reply_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.delete_reply(event):
+            yield res
+
+    @filter.command("查看关键词回复")
+    async def view_keyword_reply_cmd(self, event: AstrMessageEvent):
+        async for res in self.cmd_module.view_reply(event):
+            yield res
+
     @filter.command("添加检测词")
     async def add_detect_cmd(self, event: AstrMessageEvent):
         async for res in self.detect_module.add_item(event):
@@ -215,34 +237,45 @@ class KeywordsReplyPlugin(Star):
         async for res in self.detect_module.toggle_groups(event, False):
             yield res
 
-    @filter.command("查看所有检测词")
+    @filter.command("查看检测词列表")
     async def list_detects_cmd(self, event: AstrMessageEvent):
         async for res in self.detect_module.list_items(event):
             yield res
 
-    @filter.command("删除检测词词条")
-    async def del_detect_entry_cmd(self, event: AstrMessageEvent):
-        async for res in self.detect_module.delete_entry(event):
+    @filter.command("查看检测词")
+    async def view_detect_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.view_item(event):
             yield res
 
-    # 通用管理指令
+    @filter.command("编辑检测词回复")
+    async def edit_detect_reply_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.edit_reply(event):
+            yield res
+
+    @filter.command("删除检测词回复")
+    async def del_detect_reply_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.delete_reply(event):
+            yield res
+
+    @filter.command("查看检测词回复")
+    async def view_detect_reply_cmd(self, event: AstrMessageEvent):
+        async for res in self.detect_module.view_reply(event):
+            yield res
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         msg = event.message_str.strip()
         if not msg: return
         
-        # 统一处理：管理指令跳过（由 @filter.command 处理）
         management_prefixes = ["/添加", "/编辑", "/删除", "/启用", "/禁用", "/查看", "添加", "编辑", "删除", "启用", "禁用", "查看"]
         if any(msg.startswith(p) for p in management_prefixes):
             return
             
-        # 1. 检查 command_triggered
         res = await self.cmd_module.handle_message(event)
         if res:
             yield res
             return
 
-        # 2. 检查 auto_detect
         res = await self.detect_module.handle_message(event)
         if res:
             yield res

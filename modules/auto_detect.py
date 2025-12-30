@@ -31,7 +31,6 @@ class AutoDetectModule:
             return keyword in text
 
     async def handle_message(self, event: AstrMessageEvent):
-        # 检测词仅在非指令消息中触发，避免与指令冲突
         if event.is_at_or_wake_command:
             return None
             
@@ -40,20 +39,67 @@ class AutoDetectModule:
         
         for cfg in self.plugin.data[self.data_key]:
             if self._match_keyword(msg, cfg):
-                if cfg.get("enabled_groups") and group_id not in cfg["enabled_groups"]:
+                if not cfg.get("enabled", True):
                     continue
                 
+                mode = cfg.get("mode", "whitelist")
+                groups = cfg.get("groups", [])
+                
+                if group_id:
+                    if mode == "whitelist":
+                        if group_id not in groups:
+                            continue
+                    else: # blacklist
+                        if group_id in groups:
+                            continue
+                
                 logger.info(f"检测词触发: {cfg['keyword']} (来自: {event.get_sender_id()})")
+                if not cfg["entries"]:
+                    continue
                 entry = random.choice(cfg["entries"])
                 return self.plugin._get_reply_result(event, entry)
         return None
+
+    def _find_indices(self, param: str) -> list[int]:
+        """
+        根据输入参数（序号或检测词）查找对应的索引列表。
+        支持 1,2-5 格式的序号，也支持直接匹配检测词内容。
+        """
+        data = self.plugin.data[self.data_key]
+        if not data:
+            return []
+
+        # 尝试解析为序号
+        try:
+            indices = []
+            parts = param.split(',')
+            for part in parts:
+                if '-' in part:
+                    start, end = map(int, part.split('-'))
+                    indices.extend(range(start-1, end))
+                else:
+                    indices.append(int(part)-1)
+            
+            # 过滤掉越界的序号
+            valid_indices = [i for i in indices if 0 <= i < len(data)]
+            if valid_indices:
+                return valid_indices
+        except ValueError:
+            pass
+
+        # 尝试作为检测词匹配
+        indices = []
+        for i, cfg in enumerate(data):
+            if cfg['keyword'] == param:
+                indices.append(i)
+        
+        return indices
 
     async def add_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
             return
 
-        # 移除指令名，获取参数部分
         full_text = event.message_str.strip()
         parts = full_text.split(None, 1)
         if len(parts) < 2:
@@ -71,7 +117,6 @@ class AutoDetectModule:
             yield event.plain_result("格式错误。用法: /添加检测词 [-r] <关键词> <回复内容>")
             return
 
-        # 提取关键词和回复内容，只拆分第一个空白字符（空格或换行）
         match = re.search(r'\s+', args_text)
         if match:
             keyword = args_text[:match.start()]
@@ -84,7 +129,6 @@ class AutoDetectModule:
             yield event.plain_result("关键词不能为空。")
             return
 
-        # 验证正则合法性
         if is_regex:
             if not self.plugin._is_safe_regex(keyword):
                 yield event.plain_result("正则表达式存在安全风险，请简化后重试。")
@@ -95,29 +139,23 @@ class AutoDetectModule:
                 yield event.plain_result(f"无效的正则表达式: {e}")
                 return
 
-        # 构建回复内容组件
         components = event.get_messages()
         reply_components = []
         
-        # 第一个组件包含指令和关键词，我们需要提取出后面的回复文本
         first_comp = components[0]
         if isinstance(first_comp, Plain):
             text = first_comp.text
-            # 回复内容在第一个组件中的起始位置
             if remaining:
-                # 寻找关键词后的第一个 remaining，防止关键词和回复内容相同时找错位置
                 k_idx = text.find(keyword)
                 search_start = k_idx + len(keyword) if k_idx != -1 else 0
                 r_idx = text.find(remaining, search_start)
                 if r_idx != -1:
                     reply_components.append(Plain(text[r_idx:]))
                 elif k_idx != -1:
-                    # 如果 remaining 不在第一个组件（可能跨组件），则尝试获取 keyword 之后的所有内容
                     after_keyword = text[search_start:].lstrip()
                     if after_keyword:
                         reply_components.append(Plain(after_keyword))
         
-        # 添加后续所有组件（如图片、表情等）
         reply_components.extend(components[1:])
         
         entry, has_image = self.plugin._parse_message_to_entry(reply_components)
@@ -128,33 +166,46 @@ class AutoDetectModule:
         words_limit = self.plugin.config.get("words_limit", 10)
         keyword_cfg = next((item for item in self.plugin.data[self.data_key] if item["keyword"] == keyword), None)
         
+        current_group_id = event.get_group_id()
+        is_group = event.get_platform_name() != "private"
+        
         if keyword_cfg:
-            # 检查是否已有图文词条，或者新添加的是否为图文词条
-            has_existing_image = any(e.get("images") for e in keyword_cfg["entries"])
-            if has_image or has_existing_image:
-                yield event.plain_result("包含图片的检测词只能有一个词条。")
-                return
-            
             if len(keyword_cfg["entries"]) >= words_limit:
-                yield event.plain_result(f"词条数量已达上限 ({words_limit})。")
+                yield event.plain_result(f"回复数量已达上限 ({words_limit})。")
                 return
             processed_entry = await self.plugin._process_entry_images(entry)
             keyword_cfg["entries"].append(processed_entry)
             keyword_cfg["regex"] = is_regex
+            status_msg = f"已为现有检测词添加新回复（当前共有 {len(keyword_cfg['entries'])} 个回复）。"
         else:
             processed_entry = await self.plugin._process_entry_images(entry)
+            
+            if is_group and current_group_id:
+                enabled = True
+                mode = "whitelist"
+                groups = [current_group_id]
+                status_msg = f"已成功添加检测词，并在当前群聊启用。"
+            else:
+                enabled = False
+                mode = "blacklist"
+                groups = []
+                status_msg = "已成功添加检测词。由于在非群聊环境创建，已默认全局禁用。"
+            
             keyword_cfg = {
                 "keyword": keyword,
                 "entries": [processed_entry],
                 "regex": is_regex,
-                "enabled_groups": [],
+                "enabled": enabled,
+                "mode": mode,
+                "groups": groups,
                 "case_sensitive": self.plugin.config.get("case_sensitive", False)
             }
             self.plugin.data[self.data_key].append(keyword_cfg)
 
         self.plugin._save_data()
         logger.info(f"添加检测词: {keyword} (操作者: {event.get_sender_id()})")
-        yield event.plain_result(f"成功添加检测词: {keyword}")
+        
+        yield event.plain_result(f"成功操作检测词: {keyword}\n{status_msg}")
 
     async def edit_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
@@ -210,27 +261,28 @@ class AutoDetectModule:
             yield event.plain_result("权限不足。")
             return
             
-        parts = event.message_str.strip().split()
+        parts = event.message_str.strip().split(None, 1)
         if len(parts) < 2:
-            yield event.plain_result("格式错误。用法: /删除检测词 <序号1> <序号2> ...")
+            yield event.plain_result("格式错误。用法: /删除检测词 <序号或检测词内容>")
             return
-            
+
+        param = parts[1]
+        indices = self._find_indices(param)
+        
+        if not indices:
+            yield event.plain_result(f"未找到匹配 '{param}' 的检测词。")
+            return
+
         try:
-            indices = [int(a) - 1 for a in parts[1:]]
             indices.sort(reverse=True)
             deleted_keywords = []
             for idx in indices:
-                if 0 <= idx < len(self.plugin.data[self.data_key]):
-                    keyword = self.plugin.data[self.data_key].pop(idx)["keyword"]
-                    deleted_keywords.append(keyword)
-            if deleted_keywords:
-                self.plugin._save_data()
-                logger.info(f"删除检测词: {', '.join(deleted_keywords)} (操作者: {event.get_sender_id()})")
-                yield event.plain_result(f"已删除 {len(deleted_keywords)} 个检测词。")
-            else:
-                yield event.plain_result("未找到有效的序号。")
-        except ValueError:
-            yield event.plain_result("序号必须是数字。")
+                cfg = self.plugin.data[self.data_key].pop(idx)
+                deleted_keywords.append(cfg['keyword'])
+            
+            self.plugin._save_data()
+            logger.info(f"删除检测词: {', '.join(deleted_keywords)} (操作者: {event.get_sender_id()})")
+            yield event.plain_result(f"检测词 '{', '.join(deleted_keywords)}' 已删除。")
         except Exception as e:
             logger.error(f"删除检测词异常: {e}")
             yield event.plain_result(f"操作失败: {e}")
@@ -241,43 +293,102 @@ class AutoDetectModule:
             return
             
         parts = event.message_str.strip().split()
+        cmd_name = "启用" if enable else "禁用"
         if len(parts) < 2:
-            cmd_name = "启用" if enable else "禁用"
-            yield event.plain_result(f"格式错误。用法: /{cmd_name}检测词 <序号> [群号1] [群号2] ...")
+            yield event.plain_result(f"格式错误。用法: /{cmd_name}检测词 <序号或关键词> [群号1] [群号2] ...")
             return
             
-        try:
-            idx = int(parts[1]) - 1
-            group_ids = parts[2:]
+        param = parts[1]
+        indices = self._find_indices(param)
+        
+        if not indices:
+            yield event.plain_result(f"未找到匹配 '{param}' 的检测词。")
+            return
+
+        args = parts[2:]
+        for idx in indices:
+            cfg = self.plugin.data[self.data_key][idx]
             
-            if 0 <= idx < len(self.plugin.data[self.data_key]):
-                cfg = self.plugin.data[self.data_key][idx]
-                if "enabled_groups" not in cfg: cfg["enabled_groups"] = []
-                
-                if not group_ids:
-                    if enable:
-                        cfg["enabled_groups"] = []
-                    else:
-                        yield event.plain_result("请指定要禁用的群号。")
-                        return
-                else:
-                    for gid in group_ids:
-                        if enable:
-                            if gid not in cfg["enabled_groups"]:
-                                cfg["enabled_groups"].append(gid)
+            current_group_id = event.get_group_id()
+            is_group = event.get_platform_name() != "private"
+
+            if enable:
+                if not args:
+                    # 情况1: /启用检测词 <idx> (无群号)
+                    if is_group and current_group_id:
+                        # 如果在群聊中，且当前是黑名单模式，则从黑名单移除该群
+                        if cfg["mode"] == "blacklist":
+                            if current_group_id in cfg["groups"]:
+                                cfg["groups"].remove(current_group_id)
                         else:
-                            if gid in cfg["enabled_groups"]:
-                                cfg["enabled_groups"].remove(gid)
-                
-                self.plugin._save_data()
-                status = "已启用" if enable else "已禁用"
-                groups_str = ", ".join(group_ids) if group_ids else "所有群聊 (清除限制)"
-                logger.info(f"修改检测词群聊限制: {cfg['keyword']} -> {status} {groups_str} (操作者: {event.get_sender_id()})")
-                yield event.plain_result(f"检测词 '{cfg['keyword']}' {status} 群聊: {groups_str}")
-            else:
-                yield event.plain_result("序号无效。")
-        except ValueError:
-            yield event.plain_result("序号必须是数字。")
+                            # 如果是白名单模式，则添加该群
+                            if current_group_id not in cfg["groups"]:
+                                cfg["groups"].append(current_group_id)
+                        cfg["enabled"] = True
+                        groups_str = f"当前群聊 ({current_group_id})"
+                    else:
+                        yield event.plain_result("当前不在群聊中，请指定群号或使用'全局'参数。")
+                        return
+                elif args[0] == "全局":
+                    # 情况2: /启用检测词 <idx> 全局
+                    cfg["enabled"] = True
+                    cfg["mode"] = "blacklist"
+                    cfg["groups"] = []
+                    groups_str = "全局 (所有群聊)"
+                else:
+                    # 情况3: /启用检测词 <idx> <群号...>
+                    # 切换到白名单模式（如果原来不是的话）并添加群号
+                    if cfg["mode"] != "whitelist":
+                        cfg["mode"] = "whitelist"
+                        cfg["groups"] = []
+                    
+                    for gid in args:
+                        if not gid.isdigit():
+                            yield event.plain_result(f"群号格式错误: {gid}")
+                            return
+                        if gid not in cfg["groups"]:
+                            cfg["groups"].append(gid)
+                    groups_str = ", ".join(args)
+                    cfg["enabled"] = True
+            else: # 禁用
+                if not args:
+                    # 情况4: /禁用检测词 <idx> (无群号)
+                    if is_group and current_group_id:
+                        # 如果在群聊中，切换到黑名单模式（如果原来不是的话）并添加该群
+                        if cfg["mode"] != "blacklist":
+                            cfg["mode"] = "blacklist"
+                            cfg["groups"] = []
+                        if current_group_id not in cfg["groups"]:
+                            cfg["groups"].append(current_group_id)
+                        groups_str = f"当前群聊 ({current_group_id})"
+                        cfg["enabled"] = True
+                    else:
+                        # 全局禁用
+                        cfg["enabled"] = False
+                        groups_str = "全局"
+                elif args[0] == "全局":
+                    # 情况5: /禁用检测词 <idx> 全局
+                    cfg["enabled"] = False
+                    groups_str = "全局"
+                else:
+                    # 情况6: /禁用检测词 <idx> <群号...>
+                    # 切换到黑名单模式（如果原来不是的话）并添加群号
+                    if cfg["mode"] != "blacklist":
+                        cfg["mode"] = "blacklist"
+                        cfg["groups"] = []
+                    
+                    for gid in args:
+                        if not gid.isdigit():
+                            yield event.plain_result(f"群号格式错误: {gid}")
+                            return
+                        if gid not in cfg["groups"]:
+                            cfg["groups"].append(gid)
+                    groups_str = ", ".join(args)
+                    cfg["enabled"] = True
+
+            self.plugin._save_data()
+            logger.info(f"修改检测词群聊限制: {cfg['keyword']} -> {cmd_name} {groups_str} (操作者: {event.get_sender_id()})")
+            yield event.plain_result(f"检测词 '{cfg['keyword']}' {cmd_name} 群聊: {groups_str}")
 
     async def list_items(self, event):
         res = "检测词列表 (自动检测):\n"
@@ -286,7 +397,25 @@ class AutoDetectModule:
         else:
             for i, cfg in enumerate(self.plugin.data[self.data_key], 1):
                 regex_str = " [正则]" if cfg.get("regex", False) else ""
-                groups_str = f" [群:{','.join(cfg['enabled_groups'])}]" if cfg.get("enabled_groups") else " [全群]"
+                
+                enabled = cfg.get("enabled", True)
+                mode = cfg.get("mode", "whitelist")
+                groups = cfg.get("groups", [])
+                
+                if not enabled:
+                    groups_str = " [全局禁用]"
+                else:
+                    if mode == "blacklist":
+                        if not groups:
+                            groups_str = " [全局启用]"
+                        else:
+                            groups_str = f" [黑名单:{','.join(groups)}]"
+                    else: # whitelist
+                        if not groups:
+                            groups_str = " [未启用]"
+                        else:
+                            groups_str = f" [白名单:{','.join(groups)}]"
+                
                 res += f"{i}. {cfg['keyword']}{regex_str}{groups_str}\n"
                 for j, entry in enumerate(cfg["entries"], 1):
                     imgs_str = "[图片]" * len(entry.get("images", []))
@@ -294,35 +423,219 @@ class AutoDetectModule:
                     res += f"  └─ {j}. {content[:50]}{'...' if len(content) > 50 else ''}\n"
         yield event.plain_result(res.strip())
 
-    async def delete_entry(self, event: AstrMessageEvent):
+    async def view_item(self, event: AstrMessageEvent):
+        parts = event.message_str.strip().split()
+        if len(parts) < 2:
+            yield event.plain_result("用法: /查看检测词 <序号或检测词内容>")
+            return
+        
+        if len(parts) >= 3:
+            async for res in self.view_reply(event):
+                yield res
+            return
+            
+        param = parts[1]
+        indices = self._find_indices(param)
+        
+        if not indices:
+            yield event.plain_result(f"未找到匹配 '{param}' 的检测词。")
+            return
+            
+        for idx in indices:
+            cfg = self.plugin.data[self.data_key][idx]
+            entries = cfg.get("entries", [])
+            
+            if len(entries) == 1:
+                entry = entries[0]
+                
+                enabled = cfg.get("enabled", True)
+                mode = cfg.get("mode", "whitelist")
+                groups = cfg.get("groups", [])
+                
+                if not enabled:
+                    groups_str = "全局禁用"
+                else:
+                    if mode == "blacklist":
+                        groups_str = "全局启用" if not groups else f"黑名单模式 (禁用群: {', '.join(groups)})"
+                    else:
+                        groups_str = "未在任何群聊启用" if not groups else f"白名单模式 (允许群: {', '.join(groups)})"
+
+                intro = f"【{idx+1}】| 检测词: {cfg['keyword']}\n"
+                intro += f"类型: {'正则匹配' if cfg.get('regex') else '包含匹配'}\n"
+                intro += f"状态: {groups_str}\n"
+
+                has_images = len(entry.get("images", [])) > 0
+                if not has_images:
+                    intro += "回复详情：\n"
+                    intro += entry.get("text", "")
+                    yield event.plain_result(intro)
+                    continue
+
+                intro += "回复详情：" 
+                res_obj = self.plugin._get_reply_result(event, entry)
+                if res_obj and res_obj.chain:
+                    res_obj.chain.insert(0, Plain("\n"))
+                    res_obj.chain.insert(0, Plain(intro))
+                    yield res_obj
+                else:
+                    yield event.plain_result(intro + "(回复内容为空)")
+            else:
+                enabled = cfg.get("enabled", True)
+                mode = cfg.get("mode", "whitelist")
+                groups = cfg.get("groups", [])
+                
+                if not enabled:
+                    groups_str = "全局禁用"
+                else:
+                    if mode == "blacklist":
+                        groups_str = "全局启用" if not groups else f"黑名单模式 (禁用群: {', '.join(groups)})"
+                    else:
+                        groups_str = "未在任何群聊启用" if not groups else f"白名单模式 (允许群: {', '.join(groups)})"
+
+                res = f"【{idx+1}】 检测词: {cfg['keyword']}\n"
+                res += f"类型: {'正则匹配' if cfg.get('regex') else '包含匹配'}\n"
+                res += f"状态: {groups_str}\n"
+                res += f"回复数量: {len(entries)}\n"
+                res += "回复列表：\n"
+                
+                for i, entry in enumerate(entries, 1):
+                    text = entry.get("text", "").replace("\n", " ")
+                    imgs_str = " [图片]" if entry.get("images") else ""
+                    res += f"{i}. {text[:30]}{'...' if len(text) > 30 else ''}{imgs_str}\n"
+                
+                res += f"\n提示: 使用 /查看检测词回复 {idx+1} <回复序号> 查看完整内容"
+                yield event.plain_result(res.strip())
+
+    async def view_reply(self, event: AstrMessageEvent):
+        parts = event.message_str.strip().split()
+        if len(parts) < 3:
+            yield event.plain_result("用法: /查看检测词回复 <检测词序号> <回复序号>")
+            return
+        
+        try:
+            idx = int(parts[1]) - 1
+            reply_idx = int(parts[2]) - 1
+            
+            if 0 <= idx < len(self.plugin.data[self.data_key]):
+                cfg = self.plugin.data[self.data_key][idx]
+                if 0 <= reply_idx < len(cfg["entries"]):
+                    entry = cfg["entries"][reply_idx]
+                    intro = f"检测词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复：\n\n"
+                    
+                    has_images = len(entry.get("images", [])) > 0
+                    if not has_images:
+                        intro += entry.get("text", "")
+                        yield event.plain_result(intro)
+                        return
+
+                    res_obj = self.plugin._get_reply_result(event, entry)
+                    if res_obj and res_obj.chain:
+                        res_obj.chain.insert(0, Plain(intro))
+                        yield res_obj
+                    else:
+                        yield event.plain_result(intro + "(回复内容为空)")
+                else:
+                    yield event.plain_result("回复序号无效。")
+            else:
+                yield event.plain_result("检测词序号无效。")
+        except ValueError:
+            yield event.plain_result("序号必须是数字。")
+
+    async def edit_reply(self, event: AstrMessageEvent):
+        if not self.plugin._is_admin(event):
+            yield event.plain_result("权限不足。")
+            return
+
+        full_text = event.message_str.strip()
+        parts = full_text.split(None, 3) 
+        
+        if len(parts) < 3:
+            yield event.plain_result("格式错误。用法:\n/编辑检测词回复 <检测词序号> <回复序号> <新内容>\n/编辑检测词回复 <检测词序号> <新内容> (单回复时)")
+            return
+
+        try:
+            kw_idx = int(parts[1]) - 1
+            if kw_idx < 0 or kw_idx >= len(self.plugin.data[self.data_key]):
+                yield event.plain_result("检测词序号无效。")
+                return
+            
+            cfg = self.plugin.data[self.data_key][kw_idx]
+            entries = cfg["entries"]
+            
+            try:
+                reply_idx = int(parts[2]) - 1
+                if 0 <= reply_idx < len(entries):
+                    if len(parts) < 4:
+                        yield event.plain_result("请输入新的回复内容。")
+                        return
+                    new_content_raw = parts[3]
+                else:
+                    if len(entries) == 1:
+                        reply_idx = 0
+                        new_content_raw = full_text.split(None, 2)[2]
+                    else:
+                        yield event.plain_result(f"该检测词有 {len(entries)} 个回复，请指定要编辑的序号。")
+                        return
+            except ValueError:
+                if len(entries) == 1:
+                    reply_idx = 0
+                    new_content_raw = full_text.split(None, 2)[2]
+                else:
+                    yield event.plain_result(f"该检测词有 {len(entries)} 个回复，请指定要编辑的序号。")
+                    return
+
+            components = event.get_messages()
+            processed_comps = []
+            first_plain_found = False
+            for comp in components:
+                if isinstance(comp, Plain) and not first_plain_found:
+                    processed_comps.append(Plain(new_content_raw))
+                    first_plain_found = True
+                elif not isinstance(comp, Plain) or first_plain_found:
+                    processed_comps.append(comp)
+            
+            entry, has_image = self.plugin._parse_message_to_entry(processed_comps)
+            if not entry.get("text") and not entry.get("images"):
+                 yield event.plain_result("回复内容不能为空。")
+                 return
+            
+            processed_entry = await self.plugin._process_entry_images(entry)
+            cfg["entries"][reply_idx] = processed_entry
+            
+            self.plugin._save_data()
+            logger.info(f"编辑检测词回复: {cfg['keyword']} (序号 {reply_idx+1}) (操作者: {event.get_sender_id()})")
+            yield event.plain_result(f"已更新检测词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复。")
+
+        except Exception as e:
+            logger.error(f"编辑回复异常: {e}", exc_info=True)
+            yield event.plain_result(f"操作失败: {e}")
+
+    async def delete_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
             return
             
         parts = event.message_str.strip().split()
         if len(parts) < 3:
-            yield event.plain_result("格式错误。用法: /删除检测词词条 <关键词序号> <词条序号>")
+            yield event.plain_result("格式错误。用法: /删除检测词回复 <检测词序号> <回复序号>")
             return
             
         try:
             idx = int(parts[1]) - 1
-            entry_idx = int(parts[2]) - 1
+            reply_idx = int(parts[2]) - 1
             
             if 0 <= idx < len(self.plugin.data[self.data_key]):
                 keyword_cfg = self.plugin.data[self.data_key][idx]
-                if 0 <= entry_idx < len(keyword_cfg["entries"]):
-                    keyword_cfg["entries"].pop(entry_idx)
+                if 0 <= reply_idx < len(keyword_cfg["entries"]):
+                    keyword_cfg["entries"].pop(reply_idx)
                     keyword = keyword_cfg["keyword"]
-                    if not keyword_cfg["entries"]:
-                        self.plugin.data[self.data_key].pop(idx)
-                        logger.info(f"关键词 {keyword} 已无词条，自动删除关键词。")
                     
                     self.plugin._save_data()
-                    logger.info(f"删除检测词词条: {keyword} 序号 {idx+1}, 词条序号 {entry_idx+1} (操作者: {event.get_sender_id()})")
-                    yield event.plain_result(f"已删除检测词 '{keyword}' 的第 {entry_idx+1} 个词条。")
+                    logger.info(f"删除检测词回复: {keyword} 序号 {idx+1}, 回复序号 {reply_idx+1} (操作者: {event.get_sender_id()})")
+                    yield event.plain_result(f"已删除检测词 '{keyword}' 的第 {reply_idx+1} 个回复。")
                 else:
-                    yield event.plain_result("词条序号无效。")
+                    yield event.plain_result("回复序号无效。")
             else:
-                yield event.plain_result("关键词序号无效。")
+                yield event.plain_result("检测词序号无效。")
         except ValueError:
             yield event.plain_result("序号必须是数字。")
