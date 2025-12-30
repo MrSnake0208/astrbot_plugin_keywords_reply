@@ -1,8 +1,7 @@
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api import logger
 from astrbot.api.message_components import *
-from astrbot.api.all import StarTools
 import os
 import json
 import re
@@ -12,7 +11,7 @@ import hashlib
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
 
-@register("astrbot_plugin_keywords_reply", "Foolllll", "关键词回复插件", "0.0.1")
+@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图片回复、正则表达式和群聊过滤的关键词回复插件。", "v0.0.1", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
 class KeywordsReplyPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
