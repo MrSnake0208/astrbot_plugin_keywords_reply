@@ -7,6 +7,7 @@ import json
 import re
 import aiohttp
 import hashlib
+import asyncio
 
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
@@ -103,6 +104,9 @@ class KeywordsReplyPlugin(Star):
         try:
             chain = []
             
+            if self.config.get("quote_reply", False) and event.message_obj and event.message_obj.message_id:
+                chain.append(Reply(id=event.message_obj.message_id))
+            
             if entry.get("text"):
                 chain.append(Plain(entry["text"]))
             
@@ -151,11 +155,13 @@ class KeywordsReplyPlugin(Star):
 
     @filter.command("添加关键词")
     async def add_keyword_cmd(self, event: AstrMessageEvent):
+        """添加新关键词和回复。用法: /添加关键词 <关键词> <回复内容(支持图片)>"""
         async for res in self.cmd_module.add_item(event):
             yield res
 
     @filter.command("编辑关键词")
     async def edit_keyword_cmd(self, event: AstrMessageEvent):
+        """修改关键词触发词。用法: /编辑关键词 <序号或旧关键词> <新关键词>"""
         parts = event.message_str.strip().split(None, 2)
         if len(parts) < 3:
             yield event.plain_result("格式错误。用法: /编辑关键词 <序号或关键词内容> <新关键词>")
@@ -174,93 +180,150 @@ class KeywordsReplyPlugin(Star):
 
     @filter.command("删除关键词")
     async def del_keyword_cmd(self, event: AstrMessageEvent):
+        """删除关键词及其所有回复。用法: /删除关键词 <序号或关键词内容>"""
         async for res in self.cmd_module.del_items(event):
             yield res
 
     @filter.command("启用关键词")
     async def enable_keyword_cmd(self, event: AstrMessageEvent):
+        """在指定群聊或全局启用关键词。用法: /启用关键词 <序号或内容> [群号/全局]"""
         async for res in self.cmd_module.toggle_groups(event, True):
             yield res
 
     @filter.command("禁用关键词")
     async def disable_keyword_cmd(self, event: AstrMessageEvent):
+        """在指定群聊或全局禁用关键词。用法: /禁用关键词 <序号或内容> [群号/全局]"""
         async for res in self.cmd_module.toggle_groups(event, False):
             yield res
 
-    @filter.command("查看关键词列表")
+    @filter.command("查看关键词列表", alias=["查看所有关键词"])
     async def list_keywords_cmd(self, event: AstrMessageEvent):
+        """列出所有指令触发型的关键词。"""
         async for res in self.cmd_module.list_items(event):
             yield res
 
     @filter.command("查看关键词")
     async def view_keyword_cmd(self, event: AstrMessageEvent):
+        """查看关键词的详细配置和所有回复。用法: /查看关键词 <序号或内容>"""
         async for res in self.cmd_module.view_item(event):
             yield res
 
     @filter.command("编辑关键词回复")
     async def edit_keyword_reply_cmd(self, event: AstrMessageEvent):
+        """修改指定关键词的某个回复条目。用法: /编辑关键词回复 <关键词序号/内容> <回复序号> <新内容>"""
         async for res in self.cmd_module.edit_reply(event):
             yield res
 
     @filter.command("删除关键词回复")
     async def del_keyword_reply_cmd(self, event: AstrMessageEvent):
+        """删除指定关键词的某个回复条目。用法: /删除关键词回复 <关键词序号/内容> <回复序号>"""
         async for res in self.cmd_module.delete_reply(event):
             yield res
 
     @filter.command("查看关键词回复")
     async def view_keyword_reply_cmd(self, event: AstrMessageEvent):
+        """查看指定关键词的某个回复详情。用法: /查看关键词回复 <关键词序号/内容> <回复序号>"""
         async for res in self.cmd_module.view_reply(event):
             yield res
 
     @filter.command("添加检测词")
     async def add_detect_cmd(self, event: AstrMessageEvent):
+        """添加自动监听型检测词。用法: /添加检测词 [-r] <关键词> <回复内容> (-r 表示正则)"""
         async for res in self.detect_module.add_item(event):
             yield res
 
     @filter.command("编辑检测词")
     async def edit_detect_cmd(self, event: AstrMessageEvent):
+        """修改检测词触发词或正则开关。用法: /编辑检测词 [-r] <序号或内容> <新检测词>"""
         async for res in self.detect_module.edit_item(event):
             yield res
 
     @filter.command("删除检测词")
     async def del_detect_cmd(self, event: AstrMessageEvent):
+        """删除检测词。用法: /删除检测词 <序号或内容>"""
         async for res in self.detect_module.del_items(event):
             yield res
 
     @filter.command("启用检测词")
     async def enable_detect_cmd(self, event: AstrMessageEvent):
+        """在指定群聊或全局启用检测词。用法: /启用检测词 <序号或内容> [群号/全局]"""
         async for res in self.detect_module.toggle_groups(event, True):
             yield res
 
     @filter.command("禁用检测词")
     async def disable_detect_cmd(self, event: AstrMessageEvent):
+        """在指定群聊或全局禁用检测词。用法: /禁用检测词 <序号或内容> [群号/全局]"""
         async for res in self.detect_module.toggle_groups(event, False):
             yield res
 
-    @filter.command("查看检测词列表")
+    @filter.command("查看检测词列表", alias=["查看所有检测词"])
     async def list_detects_cmd(self, event: AstrMessageEvent):
+        """列出所有自动监听型的检测词。"""
         async for res in self.detect_module.list_items(event):
             yield res
 
     @filter.command("查看检测词")
     async def view_detect_cmd(self, event: AstrMessageEvent):
+        """查看检测词的匹配模式和回复内容。用法: /查看检测词 <序号或内容>"""
         async for res in self.detect_module.view_item(event):
             yield res
 
     @filter.command("编辑检测词回复")
     async def edit_detect_reply_cmd(self, event: AstrMessageEvent):
+        """修改指定检测词的某个回复条目。用法: /编辑检测词回复 <检测词序号/内容> <回复序号> <新内容>"""
         async for res in self.detect_module.edit_reply(event):
             yield res
 
     @filter.command("删除检测词回复")
     async def del_detect_reply_cmd(self, event: AstrMessageEvent):
+        """删除指定检测词的某个回复条目。用法: /删除检测词回复 <检测词序号/内容> <回复序号>"""
         async for res in self.detect_module.delete_reply(event):
             yield res
 
     @filter.command("查看检测词回复")
     async def view_detect_reply_cmd(self, event: AstrMessageEvent):
+        """查看指定检测词的某个回复详情。用法: /查看检测词回复 <检测词序号/内容> <回复序号>"""
         async for res in self.detect_module.view_reply(event):
             yield res
+
+    async def _send_and_recall(self, event: AstrMessageEvent, result: MessageEventResult, delay: int):
+        if not result: return
+        
+        if delay > 0 and event.get_platform_name() == "aiocqhttp":
+            try:
+                client = event.bot
+                group_id = event.get_group_id()
+                user_id = event.get_sender_id()
+                
+                # 构造消息
+                message = []
+                for comp in result.chain:
+                    if isinstance(comp, Plain):
+                        message.append({"type": "text", "data": {"text": comp.text}})
+                    elif isinstance(comp, Image):
+                        if comp.file:
+                            # 转换为绝对路径
+                            abs_path = os.path.abspath(comp.file)
+                            message.append({"type": "image", "data": {"file": f"file:///{abs_path}"}})
+                        elif comp.url:
+                            message.append({"type": "image", "data": {"file": comp.url}})
+                    elif isinstance(comp, Reply):
+                        message.append({"type": "reply", "data": {"id": comp.id}})
+                
+                if group_id:
+                    ret = await client.api.call_action("send_group_msg", group_id=int(group_id), message=message)
+                else:
+                    ret = await client.api.call_action("send_private_msg", user_id=int(user_id), message=message)
+                
+                message_id = ret.get("message_id")
+                if message_id:
+                    await asyncio.sleep(delay)
+                    await client.api.call_action("delete_msg", message_id=message_id)
+            except Exception as e:
+                logger.error(f"发送或撤回消息失败: {e}")
+        else:
+            # 非 aiocqhttp 平台或无延迟，直接发送
+            await event.send(result)
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
@@ -271,12 +334,22 @@ class KeywordsReplyPlugin(Star):
         if any(msg.startswith(p) for p in management_prefixes):
             return
             
+        recall_delay = self.config.get("recall_delay", "0 0").split()
+        kw_delay = int(recall_delay[0]) if len(recall_delay) > 0 else 0
+        dt_delay = int(recall_delay[1]) if len(recall_delay) > 1 else 0
+
         res = await self.cmd_module.handle_message(event)
         if res:
-            yield res
+            if kw_delay > 0:
+                await self._send_and_recall(event, res, kw_delay)
+            else:
+                yield res
             return
 
         res = await self.detect_module.handle_message(event)
         if res:
-            yield res
+            if dt_delay > 0:
+                await self._send_and_recall(event, res, dt_delay)
+            else:
+                yield res
             return

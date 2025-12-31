@@ -187,7 +187,7 @@ class AutoDetectModule:
                 status_msg = f"已成功添加检测词，并在当前群聊启用。"
             else:
                 enabled = False
-                mode = "blacklist"
+                mode = "whitelist"
                 groups = []
                 status_msg = "已成功添加检测词。由于在非群聊环境创建，已默认全局禁用。"
             
@@ -391,7 +391,7 @@ class AutoDetectModule:
             yield event.plain_result(f"检测词 '{cfg['keyword']}' {cmd_name} 群聊: {groups_str}")
 
     async def list_items(self, event):
-        res = "检测词列表 (自动检测):\n"
+        res = "检测词列表:\n"
         if not self.plugin.data[self.data_key]:
             res += "无\n"
         else:

@@ -19,5 +19,17 @@
         "type": "bool",
         "hint": "针对检测词匹配时是否区分大小写。",
         "default": false
+    },
+    "quote_reply": {
+        "description": "是否引用回复",
+        "type": "bool",
+        "hint": "回复时是否引用触发回复的消息。",
+        "default": false
+    },
+    "recall_delay": {
+        "description": "撤回延迟（秒）",
+        "type": "string",
+        "hint": "定义几秒后撤回消息。格式：\"关键词延迟 检测词延迟\"。默认 \"0 0\" 表示不撤回。注意：超过 120 秒需要 bot 具有管理员权限。",
+        "default": "0 0"
     }
 }
