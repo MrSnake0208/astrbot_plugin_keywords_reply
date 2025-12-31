@@ -346,14 +346,18 @@ class KeywordsReplyPlugin(Star):
         if res:
             if kw_delay > 0:
                 await self._send_and_recall(event, res, kw_delay)
+                event.stop_event()
             else:
                 yield res
+                event.stop_event()
             return
 
         res = await self.detect_module.handle_message(event)
         if res:
             if dt_delay > 0:
                 await self._send_and_recall(event, res, dt_delay)
+                event.stop_event()
             else:
                 yield res
+                event.stop_event()
             return
