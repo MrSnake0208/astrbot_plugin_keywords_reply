@@ -313,6 +313,9 @@ class KeywordsReplyPlugin(Star):
                 if group_id:
                     ret = await client.api.call_action("send_group_msg", group_id=int(group_id), message=message)
                 else:
+                    if delay >= 120:
+                        logger.warning(f"私聊环境撤回延迟不能超过 120 秒，已自动调整为 115 秒。")
+                        delay = 115
                     ret = await client.api.call_action("send_private_msg", user_id=int(user_id), message=message)
                 
                 message_id = ret.get("message_id")
