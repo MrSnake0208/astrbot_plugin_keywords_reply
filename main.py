@@ -327,6 +327,7 @@ class KeywordsReplyPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
+        """处理所有消息事件，包括命令触发和自动检测。"""
         msg = event.message_str.strip()
         if not msg: return
         
