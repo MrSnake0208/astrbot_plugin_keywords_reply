@@ -210,29 +210,30 @@ class CommandTriggeredModule:
             
         msg_parts = event.message_str.strip().split()
         if len(msg_parts) < 3:
-            yield event.plain_result("格式错误。用法: /编辑关键词 [-r] <序号> <新关键词>")
+            yield event.plain_result("格式错误。用法: /编辑关键词 [-r] <序号或内容> <新关键词>")
             return
 
         is_regex = False
-        idx_str = ""
+        idx_param = ""
         new_keyword = ""
 
         if msg_parts[1] == "-r":
             is_regex = True
             if len(msg_parts) < 4:
-                yield event.plain_result("格式错误。用法: /编辑关键词 -r <序号> <新关键词>")
+                yield event.plain_result("格式错误。用法: /编辑关键词 -r <序号或内容> <新关键词>")
                 return
-            idx_str = msg_parts[2]
+            idx_param = msg_parts[2]
             new_keyword = msg_parts[3]
         else:
-            idx_str = msg_parts[1]
+            idx_param = msg_parts[1]
             new_keyword = msg_parts[2]
 
-        try:
-            idx = int(idx_str) - 1
-        except ValueError:
-            yield event.plain_result("序号必须是数字。")
+        indices = self._find_indices(idx_param)
+        if not indices:
+            yield event.plain_result(f"未找到匹配 '{idx_param}' 的关键词。")
             return
+        
+        idx = indices[0]
         
         if is_regex:
             try:
@@ -491,114 +492,130 @@ class CommandTriggeredModule:
 
     async def view_reply(self, event: AstrMessageEvent):
         parts = event.message_str.strip().split()
-        if len(parts) < 3:
-            yield event.plain_result("用法: /查看关键词回复 <关键词序号> <回复序号>")
+        if len(parts) < 2:
+            yield event.plain_result("用法: /查看关键词回复 <关键词序号/内容> [回复序号]")
             return
         
         try:
-            idx = int(parts[1]) - 1
-            reply_idx = int(parts[2]) - 1
+            param = parts[1]
+            indices = self._find_indices(param)
+            if not indices:
+                yield event.plain_result(f"未找到匹配 '{param}' 的关键词。")
+                return
             
-            if 0 <= idx < len(self.plugin.data[self.data_key]):
-                cfg = self.plugin.data[self.data_key][idx]
-                if 0 <= reply_idx < len(cfg["entries"]):
-                    entry = cfg["entries"][reply_idx]
-                    intro = f"关键词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复：\n\n"
-                    
-                    has_images = len(entry.get("images", [])) > 0
-                    if not has_images:
-                        intro += entry.get("text", "")
-                        yield event.plain_result(intro)
-                        return
-
-                    res_obj = self.plugin._get_reply_result(event, entry)
-                    if res_obj and res_obj.chain:
-                        res_obj.chain.insert(0, Plain(intro))
-                        yield res_obj
-                    else:
-                        yield event.plain_result(intro + "(回复内容为空)")
+            idx = indices[0]
+            cfg = self.plugin.data[self.data_key][idx]
+            entries = cfg.get("entries", [])
+            
+            if len(parts) < 3:
+                if len(entries) == 1:
+                    reply_idx = 0
                 else:
-                    yield event.plain_result("回复序号无效。")
+                    yield event.plain_result(f"该关键词有 {len(entries)} 个回复，请指定回复序号。")
+                    return
             else:
-                yield event.plain_result("关键词序号无效。")
-        except ValueError:
-            yield event.plain_result("序号必须是数字。")
+                try:
+                    reply_idx = int(parts[2]) - 1
+                except ValueError:
+                    yield event.plain_result("回复序号必须是数字。")
+                    return
+            
+            if 0 <= reply_idx < len(entries):
+                entry = entries[reply_idx]
+                intro = f"关键词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复：\n\n"
+                
+                has_images = len(entry.get("images", [])) > 0
+                if not has_images:
+                    intro += entry.get("text", "")
+                    yield event.plain_result(intro)
+                    return
+
+                res_obj = self.plugin._get_reply_result(event, entry)
+                if res_obj and res_obj.chain:
+                    res_obj.chain.insert(0, Plain(intro))
+                    yield res_obj
+                else:
+                    yield event.plain_result(intro + "(回复内容为空)")
+            else:
+                yield event.plain_result("回复序号无效。")
+        except Exception as e:
+            logger.error(f"查看回复异常: {e}")
+            yield event.plain_result(f"操作失败: {e}")
 
     async def edit_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
             return
 
-        # 格式: /编辑关键词回复 [关键词ID] [回复序号] [新内容]
-        # 或: /编辑关键词回复 [关键词ID] [新内容] (当仅有一个回复时)
+        # 格式: /编辑关键词回复 [关键词ID/内容] [回复序号] [新内容]
+        # 或: /编辑关键词回复 [关键词ID/内容] [新内容] (当仅有一个回复时)
         full_text = event.message_str.strip()
-        parts = full_text.split(None, 3) # 最多拆分4部分: 指令, ID, (序号), 内容
+        parts = full_text.split(None, 3) # 最多拆分4部分: 指令, ID/内容, (序号), 内容
         
-        if len(parts) < 3:
-            yield event.plain_result("格式错误。用法:\n/编辑关键词回复 <关键词序号> <回复序号> <新内容>\n/编辑关键词回复 <关键词序号> <新内容> (单回复时)")
+        if len(parts) < 2:
+            yield event.plain_result("格式错误。用法:\n/编辑关键词回复 <关键词序号/内容> <回复序号> <新内容>\n/编辑关键词回复 <关键词序号/内容> <新内容> (单回复时)")
             return
 
         try:
-            kw_idx = int(parts[1]) - 1
-            if kw_idx < 0 or kw_idx >= len(self.plugin.data[self.data_key]):
-                yield event.plain_result("关键词序号无效。")
+            param = parts[1]
+            indices = self._find_indices(param)
+            if not indices:
+                yield event.plain_result(f"未找到匹配 '{param}' 的关键词。")
                 return
             
+            kw_idx = indices[0]
             cfg = self.plugin.data[self.data_key][kw_idx]
             entries = cfg["entries"]
             
             # 判断是标准格式还是简化格式
-            # 尝试将 parts[2] 解析为回复序号
-            try:
-                reply_idx = int(parts[2]) - 1
-                if 0 <= reply_idx < len(entries):
-                    # 是有效的回复序号，内容在 parts[3]
-                    if len(parts) < 4:
-                        yield event.plain_result("请输入新的回复内容。")
-                        return
-                    new_content_raw = parts[3]
-                else:
-                    # 不是有效的回复序号，尝试简化格式
-                    if len(entries) == 1:
+            components = event.get_messages()
+            if len(entries) == 1:
+                # 只有一条回复时，优先尝试解析为：指令 ID 序号 内容
+                # 但如果 序号 不是 1，或者没有 内容 且没有图片，则视为：指令 ID 内容
+                try:
+                    reply_idx_val = int(parts[2]) if len(parts) > 2 else None
+                    if reply_idx_val == 1 and (len(parts) >= 4 or any(not isinstance(c, Plain) for c in components)):
+                        # 标准格式: ID 1 内容
                         reply_idx = 0
-                        new_content_raw = full_text.split(None, 2)[2]
+                        new_content_raw = parts[3] if len(parts) >= 4 else ""
                     else:
-                        yield event.plain_result(f"该关键词有 {len(entries)} 个回复，请指定要编辑的序号。")
-                        return
-            except ValueError:
-                # parts[2] 不是数字，尝试简化格式
-                if len(entries) == 1:
+                        # 简化格式: ID 内容
+                        reply_idx = 0
+                        new_content_raw = full_text.split(None, 2)[2] if len(parts) > 2 else ""
+                except (ValueError, IndexError):
+                    # 简化格式
                     reply_idx = 0
-                    new_content_raw = full_text.split(None, 2)[2]
-                else:
+                    new_content_raw = full_text.split(None, 2)[2] if len(parts) > 2 else ""
+            else:
+                # 多条回复，必须指定序号
+                if len(parts) < 3:
                     yield event.plain_result(f"该关键词有 {len(entries)} 个回复，请指定要编辑的序号。")
+                    return
+                try:
+                    reply_idx_val = int(parts[2])
+                    if 1 <= reply_idx_val <= len(entries):
+                        reply_idx = reply_idx_val - 1
+                        if len(parts) < 4 and not any(not isinstance(c, Plain) for c in components):
+                            yield event.plain_result("请输入新的回复内容。")
+                            return
+                        new_content_raw = parts[3] if len(parts) >= 4 else ""
+                    else:
+                        yield event.plain_result(f"回复序号无效。请输入 1-{len(entries)} 之间的数字。")
+                        return
+                except ValueError:
+                    yield event.plain_result("回复序号必须是数字。")
                     return
 
             # 解析新内容 (包含图片处理)
-            components = event.get_messages()
-            # 需要从 components 中提取出新内容部分
-            # 这是一个比较复杂的逻辑，因为要跳过指令、ID、序号等 Plain 文本
-            # 简化处理：重新解析所有组件，但过滤掉前面的 Plain 文本
-            
-            new_reply_components = []
-            found_content = False
-            
-            # 找到 new_content_raw 在消息链中的位置
-            # 实际上更简单的方法是：直接用 parse_message_to_entry，但需要先剔除前面的参数
-            # 我们复用 add_item 的逻辑
-            
-            # 这里的处理逻辑需要非常小心
-            # 暂时采用简单方案：如果新内容只有文字，直接更新；如果有图片，则使用当前消息的所有组件（过滤掉指令头）
-            
             # 重新获取组件并剔除前面的指令部分
-            # 我们找第一个 Plain 组件，并替换它的 text
             processed_comps = []
             first_plain_found = False
             for comp in components:
                 if isinstance(comp, Plain) and not first_plain_found:
-                    # 找到第一个文字组件，它包含了指令
+                    # 找到第一个文字组件，它包含了指令和参数
                     # 我们将其替换为提取出的 new_content_raw
-                    processed_comps.append(Plain(new_content_raw))
+                    if new_content_raw:
+                        processed_comps.append(Plain(new_content_raw))
                     first_plain_found = True
                 elif not isinstance(comp, Plain) or first_plain_found:
                     # 后续组件（图片等）或第一个文字组件之后的文字
@@ -626,26 +643,43 @@ class CommandTriggeredModule:
             return
             
         parts = event.message_str.strip().split()
-        if len(parts) < 3:
-            yield event.plain_result("格式错误。用法: /删除关键词回复 <关键词序号> <回复序号>")
+        if len(parts) < 2:
+            yield event.plain_result("格式错误。用法: /删除关键词回复 <关键词序号/内容> [回复序号]")
             return
             
         try:
-            idx = int(parts[1]) - 1
-            reply_idx = int(parts[2]) - 1
+            param = parts[1]
+            indices = self._find_indices(param)
+            if not indices:
+                yield event.plain_result(f"未找到匹配 '{param}' 的关键词。")
+                return
             
-            if 0 <= idx < len(self.plugin.data[self.data_key]):
-                keyword_cfg = self.plugin.data[self.data_key][idx]
-                if 0 <= reply_idx < len(keyword_cfg["entries"]):
-                    keyword_cfg["entries"].pop(reply_idx)
-                    keyword = keyword_cfg["keyword"]
-                    
-                    self.plugin._save_data()
-                    logger.info(f"删除关键词回复: {keyword} 序号 {idx+1}, 回复序号 {reply_idx+1} (操作者: {event.get_sender_id()})")
-                    yield event.plain_result(f"已删除关键词 '{keyword}' 的第 {reply_idx+1} 个回复。")
+            idx = indices[0]
+            keyword_cfg = self.plugin.data[self.data_key][idx]
+            entries = keyword_cfg["entries"]
+            
+            if len(parts) < 3:
+                if len(entries) == 1:
+                    reply_idx = 0
                 else:
-                    yield event.plain_result("回复序号无效。")
+                    yield event.plain_result(f"该关键词有 {len(entries)} 个回复，请指定要删除的回复序号。")
+                    return
             else:
-                yield event.plain_result("关键词序号无效。")
-        except ValueError:
-            yield event.plain_result("序号必须是数字。")
+                try:
+                    reply_idx = int(parts[2]) - 1
+                except ValueError:
+                    yield event.plain_result("回复序号必须是数字。")
+                    return
+            
+            if 0 <= reply_idx < len(entries):
+                keyword_cfg["entries"].pop(reply_idx)
+                keyword = keyword_cfg["keyword"]
+                
+                self.plugin._save_data()
+                logger.info(f"删除关键词回复: {keyword} 序号 {idx+1}, 回复序号 {reply_idx+1} (操作者: {event.get_sender_id()})")
+                yield event.plain_result(f"已删除关键词 '{keyword}' 的第 {reply_idx+1} 个回复。")
+            else:
+                yield event.plain_result("回复序号无效。")
+        except Exception as e:
+            logger.error(f"删除回复异常: {e}")
+            yield event.plain_result(f"操作失败: {e}")
