@@ -1,3 +1,4 @@
+import time
 import re
 import random
 from astrbot.api import logger
@@ -8,6 +9,7 @@ class AutoDetectModule:
     def __init__(self, plugin):
         self.plugin = plugin
         self.data_key = "auto_detect"
+        self._last_triggered = {}
 
     def _match_keyword(self, text, keyword_cfg):
         keyword = keyword_cfg["keyword"]
@@ -35,9 +37,18 @@ class AutoDetectModule:
             return None
             
         msg = event.message_str.strip()
-        group_id = event.get_group_id()
+        session_id = event.get_group_id() or event.get_sender_id() # 优先使用群号，私聊则使用发送者 ID
+        now = time.time()
         
-        for cfg in self.plugin.data[self.data_key]:
+        # 冷却时间检查（会话独立计算）
+        cooldown = self.plugin.config.get("cooldown", 0)
+        if cooldown > 0 and session_id in self._last_triggered:
+            elapsed = now - self._last_triggered[session_id]
+            if elapsed < cooldown:
+                logger.debug(f"检测词触发处于冷却中 (Session: {session_id}), 剩余 {cooldown - elapsed:.1f}s")
+                return None
+        
+        for i, cfg in enumerate(self.plugin.data[self.data_key]):
             if self._match_keyword(msg, cfg):
                 if not cfg.get("enabled", True):
                     continue
@@ -45,6 +56,7 @@ class AutoDetectModule:
                 mode = cfg.get("mode", "whitelist")
                 groups = cfg.get("groups", [])
                 
+                group_id = event.get_group_id()
                 if group_id:
                     if mode == "whitelist":
                         if group_id not in groups:
@@ -56,6 +68,11 @@ class AutoDetectModule:
                 logger.info(f"检测词触发: {cfg['keyword']} (来自: {event.get_sender_id()})")
                 if not cfg["entries"]:
                     continue
+                
+                # 更新最后触发时间
+                if cooldown > 0:
+                    self._last_triggered[session_id] = now
+                
                 entry = random.choice(cfg["entries"])
                 return self.plugin._get_reply_result(event, entry)
         return None
