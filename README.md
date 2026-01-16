@@ -1,10 +1,16 @@
+<div align="center">
+
 # ⌨️ 关键词回复插件
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10+-blue?style=flat-square&logo=python&logoColor=white)
 ![AstrBot](https://img.shields.io/badge/framework-AstrBot-ff6b6b?style=flat-square)
 
-一款为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 设计的关键词回复插件，支持指令触发、自动监听、正则表达式、图文回复以及精细化的群聊黑白名单控制。
+</div>
+
+## ✨ 简介
+
+一款为 [**AstrBot**](https://github.com/AstrBotDevs/AstrBot) 设计的关键词回复插件，支持指令触发、自动监听、正则表达式、图文回复以及精细化的群聊黑白名单控制。
 
 ---
 
@@ -86,7 +92,7 @@
 | **`case_sensitive`** | `bool`      | `false` | 针对检测词匹配时是否区分大小写。                                      |
 | **`quote_reply`**    | `bool`      | `false` | 回复时是否引用触发回复的消息。                                        |
 | **`recall_delay`**   | `str`       | `"0 0"` | 自动撤回延迟（秒）。格式：`"关键词延迟 检测词延迟"`。0 表示不撤回。 |
-| **`cooldown`**       | `int`       | `0`     | 全局触发冷却时间（秒），0 表示不冷却。   
+| **`cooldown`**       | `int`       | `0`     | 检测词触发冷却时间（秒），0 表示不冷却。   
 
 ---
 
@@ -103,17 +109,23 @@
 
 ---
 
-## ❤️ 支持
-
-* [AstrBot 帮助文档](https://astrbot.app)
-
-* 如果您在使用中遇到问题，欢迎提交 [Issue](https://github.com/Foolllll-J/astrbot_plugin_keywords_reply/issues)。
-
----
-
 ## 🙏 致谢
 
 * 部分代码参考了以下优秀项目，在此表示诚挚感谢：
   * [astrbot_plugin_wbank](https://github.com/Zhalslar/astrbot_plugin_wbank)
   * [astrbot_plugin_keywordsreply](https://github.com/Origin173/astrbot_plugin_keywordsreply)
 
+---
+
+## ❤️ 支持
+
+* [AstrBot 帮助文档](https://astrbot.app)
+* 如果您在使用中遇到问题，欢迎提交 [Issue](https://github.com/Foolllll-J/astrbot_plugin_keywords_reply/issues)。
+
+---
+
+<div align="center">
+
+**如果本插件对你有帮助，欢迎点个 ⭐ Star 支持一下！**
+
+</div>
