@@ -576,6 +576,54 @@ class AutoDetectModule:
             logger.error(f"查看回复异常: {e}")
             yield event.plain_result(f"操作失败: {e}")
 
+    async def add_reply(self, event: AstrMessageEvent):
+        if not self.plugin._is_admin(event):
+            yield event.plain_result("权限不足。")
+            return
+
+        full_text = event.message_str.strip()
+        parts = full_text.split(None, 2)
+        if len(parts) < 2:
+            yield event.plain_result("用法: /添加检测词回复 <检测词序号/内容> <回复内容>")
+            return
+            
+        param = parts[1]
+        indices = self._find_indices(param)
+        if not indices:
+            yield event.plain_result(f"未找到匹配 '{param}' 的检测词。")
+            return
+            
+        target_idx = indices[0]
+        cfg = self.plugin.data[self.data_key][target_idx]
+        
+        if len(cfg["entries"]) >= self.plugin.config.get("words_limit", 10):
+            yield event.plain_result(f"回复数量已达上限 ({self.plugin.config.get('words_limit', 10)})。")
+            return
+
+        components = event.get_messages()
+        processed_comps = []
+        first_plain_found = False
+        
+        for comp in components:
+            if isinstance(comp, Plain) and not first_plain_found:
+                comp_parts = comp.text.strip().split(None, 2)
+                if len(comp_parts) >= 3:
+                    processed_comps.append(Plain(comp_parts[2]))
+                first_plain_found = True
+            else:
+                processed_comps.append(comp)
+
+        entry, has_image = self.plugin._parse_message_to_entry(processed_comps)
+        if not entry.get("text") and not entry.get("images"):
+            yield event.plain_result("回复内容不能为空。")
+            return
+
+        processed_entry = await self.plugin._process_entry_images(entry)
+        cfg["entries"].append(processed_entry)
+        self.plugin._save_data()
+        
+        yield event.plain_result(f"已为检测词 '{cfg['keyword']}' 添加新回复（当前共有 {len(cfg['entries'])} 个回复）。")
+
     async def edit_reply(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
             yield event.plain_result("权限不足。")
