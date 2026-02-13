@@ -40,18 +40,26 @@ class AutoDetectModule:
         session_id = event.get_group_id() or event.get_sender_id() # 优先使用群号，私聊则使用发送者 ID
         now = time.time()
         
-        # 冷却时间检查（会话独立计算）
         cooldown = self.plugin.config.get("cooldown", 0)
-        if cooldown > 0 and session_id in self._last_triggered:
-            elapsed = now - self._last_triggered[session_id]
-            if elapsed < cooldown:
-                logger.debug(f"检测词触发处于冷却中 (Session: {session_id}), 剩余 {cooldown - elapsed:.1f}s")
-                return None
+        ignore_cooldown_on_exact_match = self.plugin.config.get("ignore_cooldown_on_exact_match", False)
         
         for i, cfg in enumerate(self.plugin.data[self.data_key]):
             if self._match_keyword(msg, cfg):
                 if not cfg.get("enabled", True):
                     continue
+                
+                # 检查是否完全匹配且非正则
+                is_regex = cfg.get("regex", False)
+                is_exact_match = msg == cfg["keyword"]
+                
+                # 冷却时间检查
+                skip_cooldown = ignore_cooldown_on_exact_match and is_exact_match and not is_regex
+                
+                if not skip_cooldown and cooldown > 0 and session_id in self._last_triggered:
+                    elapsed = now - self._last_triggered[session_id]
+                    if elapsed < cooldown:
+                        logger.debug(f"检测词触发处于冷却中 (Session: {session_id}), 剩余 {cooldown - elapsed:.1f}s")
+                        continue # 尝试匹配下一个检测词
                 
                 mode = cfg.get("mode", "whitelist")
                 groups = cfg.get("groups", [])
@@ -69,12 +77,12 @@ class AutoDetectModule:
                 if not cfg["entries"]:
                     continue
                 
-                # 更新最后触发时间
-                if cooldown > 0:
+                # 更新最后触发时间（如果不是跳过冷却的情况）
+                if cooldown > 0 and not skip_cooldown:
                     self._last_triggered[session_id] = now
                 
                 entry = random.choice(cfg["entries"])
-                return self.plugin._get_reply_result(event, entry)
+                return self.plugin._get_reply_result(event, entry, use_quote=True)
         return None
 
     def _find_indices(self, param: str) -> list[int]:
@@ -111,6 +119,30 @@ class AutoDetectModule:
                 indices.append(i)
         
         return indices
+
+    def _strip_components(self, components, keyword, remaining):
+        """从组件列表中剥离命令和关键词，保留回复内容。"""
+        reply_components = []
+        for i, comp in enumerate(components):
+            if isinstance(comp, Plain):
+                text = comp.text
+                k_idx = text.find(keyword)
+                search_start = k_idx + len(keyword) if k_idx != -1 else 0
+                
+                if remaining:
+                    r_idx = text.find(remaining, search_start)
+                    if r_idx != -1:
+                        reply_components.append(Plain(text[r_idx:]))
+                        reply_components.extend(components[i+1:])
+                        return reply_components
+                
+                if k_idx != -1:
+                    after_keyword = text[search_start:].lstrip()
+                    if after_keyword:
+                        reply_components.append(Plain(after_keyword))
+                    reply_components.extend(components[i+1:])
+                    return reply_components
+        return components[1:] if components else []
 
     async def add_item(self, event: AstrMessageEvent):
         if not self.plugin._is_admin(event):
@@ -157,39 +189,19 @@ class AutoDetectModule:
                 return
 
         components = event.get_messages()
-        reply_components = []
-        
-        first_comp = components[0]
-        if isinstance(first_comp, Plain):
-            text = first_comp.text
-            if remaining:
-                k_idx = text.find(keyword)
-                search_start = k_idx + len(keyword) if k_idx != -1 else 0
-                r_idx = text.find(remaining, search_start)
-                if r_idx != -1:
-                    reply_components.append(Plain(text[r_idx:]))
-                elif k_idx != -1:
-                    after_keyword = text[search_start:].lstrip()
-                    if after_keyword:
-                        reply_components.append(Plain(after_keyword))
-        
-        reply_components.extend(components[1:])
+        reply_components = self._strip_components(components, keyword, remaining)
         
         entry, has_image = self.plugin._parse_message_to_entry(reply_components)
         if not entry.get("text") and not entry.get("images"):
             yield event.plain_result("回复内容不能为空。")
             return
 
-        words_limit = self.plugin.config.get("words_limit", 10)
         keyword_cfg = next((item for item in self.plugin.data[self.data_key] if item["keyword"] == keyword), None)
         
         current_group_id = event.get_group_id()
         is_group = event.get_platform_name() != "private"
         
         if keyword_cfg:
-            if len(keyword_cfg["entries"]) >= words_limit:
-                yield event.plain_result(f"回复数量已达上限 ({words_limit})。")
-                return
             processed_entry = await self.plugin._process_entry_images(entry)
             keyword_cfg["entries"].append(processed_entry)
             keyword_cfg["regex"] = is_regex
@@ -489,10 +501,9 @@ class AutoDetectModule:
                     yield event.plain_result(intro)
                     continue
 
-                intro += "回复详情：" 
-                res_obj = self.plugin._get_reply_result(event, entry)
+                intro += "回复详情：\n\u200b" 
+                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False)
                 if res_obj and res_obj.chain:
-                    res_obj.chain.insert(0, Plain("\n"))
                     res_obj.chain.insert(0, Plain(intro))
                     yield res_obj
                 else:
@@ -556,7 +567,7 @@ class AutoDetectModule:
             
             if 0 <= reply_idx < len(entries):
                 entry = entries[reply_idx]
-                intro = f"检测词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复：\n\n"
+                intro = f"检测词 '{cfg['keyword']}' 的第 {reply_idx+1} 个回复：\n\n\u200b"
                 
                 has_images = len(entry.get("images", [])) > 0
                 if not has_images:
@@ -564,7 +575,7 @@ class AutoDetectModule:
                     yield event.plain_result(intro)
                     return
 
-                res_obj = self.plugin._get_reply_result(event, entry)
+                res_obj = self.plugin._get_reply_result(event, entry, use_quote=False)
                 if res_obj and res_obj.chain:
                     res_obj.chain.insert(0, Plain(intro))
                     yield res_obj
@@ -596,24 +607,11 @@ class AutoDetectModule:
         target_idx = indices[0]
         cfg = self.plugin.data[self.data_key][target_idx]
         
-        if len(cfg["entries"]) >= self.plugin.config.get("words_limit", 10):
-            yield event.plain_result(f"回复数量已达上限 ({self.plugin.config.get('words_limit', 10)})。")
-            return
-
+        content = parts[2] if len(parts) > 2 else ""
         components = event.get_messages()
-        processed_comps = []
-        first_plain_found = False
-        
-        for comp in components:
-            if isinstance(comp, Plain) and not first_plain_found:
-                comp_parts = comp.text.strip().split(None, 2)
-                if len(comp_parts) >= 3:
-                    processed_comps.append(Plain(comp_parts[2]))
-                first_plain_found = True
-            else:
-                processed_comps.append(comp)
+        reply_components = self._strip_components(components, param, content)
 
-        entry, has_image = self.plugin._parse_message_to_entry(processed_comps)
+        entry, has_image = self.plugin._parse_message_to_entry(reply_components)
         if not entry.get("text") and not entry.get("images"):
             yield event.plain_result("回复内容不能为空。")
             return

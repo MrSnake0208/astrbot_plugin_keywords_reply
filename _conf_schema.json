@@ -1,6 +1,6 @@
 {
     "whitelist": {
-        "description": "白名单用户 ID",
+        "description": "白名单用户",
         "type": "list",
         "hint": "只有白名单用户或管理员可以管理关键词/检测词。可填写用户 ID 列表。",
         "default": [],
@@ -8,20 +8,8 @@
             "type": "string"
         }
     },
-    "words_limit": {
-        "description": "每个关键词/检测词的最大词条数",
-        "type": "int",
-        "hint": "每个触发词允许配置的最大回复词条数量。",
-        "default": 10
-    },
-    "case_sensitive": {
-        "description": "是否大小写敏感",
-        "type": "bool",
-        "hint": "针对检测词匹配时是否区分大小写。",
-        "default": false
-    },
     "quote_reply": {
-        "description": "是否引用回复",
+        "description": "引用回复",
         "type": "bool",
         "hint": "回复时是否引用触发回复的消息。",
         "default": false
@@ -37,5 +25,17 @@
         "type": "int",
         "hint": "设置检测词触发后的冷却时间（秒），0 表示不冷却。",
         "default": 0
+    },
+    "ignore_cooldown_on_exact_match": {
+        "description": "完全匹配时无视冷却",
+        "hint": "针对检测词生效。如果消息内容与检测词完全一致（非正则模式），则无视冷却时间发送回复。",
+        "type": "bool",
+        "default": false
+    },
+    "case_sensitive": {
+        "description": "是否大小写敏感",
+        "type": "bool",
+        "hint": "针对检测词匹配时是否区分大小写。",
+        "default": false
     }
 }

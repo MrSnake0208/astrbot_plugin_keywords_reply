@@ -12,7 +12,7 @@ import asyncio
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
 
-@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图文回复、正则匹配关键词和灵活管理的关键词回复插件。", "v1.0.1", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
+@register("astrbot_plugin_keywords_reply", "Foolllll", "支持图文回复、正则匹配关键词和灵活管理的关键词回复插件。", "v1.1.0", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
 class KeywordsReplyPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -100,11 +100,11 @@ class KeywordsReplyPlugin(Star):
         entry["images"] = processed_images
         return entry
 
-    def _get_reply_result(self, event: AstrMessageEvent, entry: dict):
+    def _get_reply_result(self, event: AstrMessageEvent, entry: dict, use_quote: bool = False):
         try:
             chain = []
             
-            if self.config.get("quote_reply", False) and event.message_obj and event.message_obj.message_id:
+            if use_quote and self.config.get("quote_reply", False) and event.message_obj and event.message_obj.message_id:
                 chain.append(Reply(id=event.message_obj.message_id))
             
             if entry.get("text"):
