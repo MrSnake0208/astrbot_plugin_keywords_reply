@@ -963,6 +963,18 @@ class WebUIServer:
             <label>图片文件名（可选，多个用逗号分隔）</label>
             <input type="text" name="reply_images" placeholder="如: image1.jpg, image2.jpg">
         </div>
+        <div class="form-group">
+            <label>群聊限制模式</label>
+            <select name="mode">
+                <option value="all">所有群聊</option>
+                <option value="whitelist">白名单（仅指定群可用）</option>
+                <option value="blacklist">黑名单（指定群不可用）</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>群号列表（逗号分隔，仅在白名单/黑名单模式下有效）</label>
+            <input type="text" name="groups" placeholder="如: 123456789,987654321">
+        </div>
         <div style="display: flex; gap: 1rem;">
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="/keywords" class="btn btn-secondary">取消</a>
@@ -979,6 +991,9 @@ class WebUIServer:
                 entries = item.get("entries", [])
                 reply_text = ""
                 reply_images = ""
+                mode = item.get("mode", "all")
+                groups = item.get("groups", [])
+                groups_str = ", ".join(str(g) for g in groups) if groups else ""
                 if entries:
                     first_reply = entries[0]
                     reply_text = first_reply.get("text", "")
@@ -1003,6 +1018,18 @@ class WebUIServer:
         <div class="form-group">
             <label>图片文件名（可选，多个用逗号分隔）</label>
             <input type="text" name="reply_images" value="{self._escape_html(reply_images)}">
+        </div>
+        <div class="form-group">
+            <label>群聊限制模式</label>
+            <select name="mode">
+                <option value="all" {"selected" if mode == "all" else ""}>所有群聊</option>
+                <option value="whitelist" {"selected" if mode == "whitelist" else ""}>白名单（仅指定群可用）</option>
+                <option value="blacklist" {"selected" if mode == "blacklist" else ""}>黑名单（指定群不可用）</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>群号列表（逗号分隔，仅在白名单/黑名单模式下有效）</label>
+            <input type="text" name="groups" value="{self._escape_html(groups_str)}" placeholder="如: 123456789,987654321">
         </div>
         <div style="display: flex; gap: 1rem;">
             <button type="submit" class="btn btn-primary">保存</button>
@@ -1123,6 +1150,18 @@ function doSearch() {{
             <label>图片文件名（可选，多个用逗号分隔）</label>
             <input type="text" name="reply_images" placeholder="如: image1.jpg, image2.jpg">
         </div>
+        <div class="form-group">
+            <label>群聊限制模式</label>
+            <select name="mode">
+                <option value="all">所有群聊</option>
+                <option value="whitelist">白名单（仅指定群可用）</option>
+                <option value="blacklist">黑名单（指定群不可用）</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>群号列表（逗号分隔，仅在白名单/黑名单模式下有效）</label>
+            <input type="text" name="groups" placeholder="如: 123456789,987654321">
+        </div>
         <div style="display: flex; gap: 1rem;">
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="/detects" class="btn btn-secondary">取消</a>
@@ -1140,6 +1179,9 @@ function doSearch() {{
                 entries = item.get("entries", [])
                 reply_text = ""
                 reply_images = ""
+                mode = item.get("mode", "all")
+                groups = item.get("groups", [])
+                groups_str = ", ".join(str(g) for g in groups) if groups else ""
                 if entries:
                     first_reply = entries[0]
                     reply_text = first_reply.get("text", "")
@@ -1170,6 +1212,18 @@ function doSearch() {{
         <div class="form-group">
             <label>图片文件名（可选，多个用逗号分隔）</label>
             <input type="text" name="reply_images" value="{self._escape_html(reply_images)}">
+        </div>
+        <div class="form-group">
+            <label>群聊限制模式</label>
+            <select name="mode">
+                <option value="all" {"selected" if mode == "all" else ""}>所有群聊</option>
+                <option value="whitelist" {"selected" if mode == "whitelist" else ""}>白名单（仅指定群可用）</option>
+                <option value="blacklist" {"selected" if mode == "blacklist" else ""}>黑名单（指定群不可用）</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>群号列表（逗号分隔，仅在白名单/黑名单模式下有效）</label>
+            <input type="text" name="groups" value="{self._escape_html(groups_str)}" placeholder="如: 123456789,987654321">
         </div>
         <div style="display: flex; gap: 1rem;">
             <button type="submit" class="btn btn-primary">保存</button>
@@ -1492,6 +1546,9 @@ function viewImage(src) {
             keyword = form_data.get("keyword", "").strip()
             reply_text = form_data.get("reply_text", "").strip()
             reply_images = form_data.get("reply_images", "").strip()
+            mode = form_data.get("mode", "all")
+            groups_str = form_data.get("groups", "").strip()
+            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
 
             if keyword:
                 # 构建回复
@@ -1515,8 +1572,8 @@ function viewImage(src) {
                     keywords.append({
                         "keyword": keyword,
                         "entries": [reply],
-                        "mode": "all",
-                        "groups": []
+                        "mode": mode,
+                        "groups": groups
                     })
 
                 self.plugin._save_data()
@@ -1526,10 +1583,15 @@ function viewImage(src) {
             keyword = form_data.get("keyword", "").strip()
             reply_text = form_data.get("reply_text", "").strip()
             reply_images = form_data.get("reply_images", "").strip()
+            mode = form_data.get("mode", "all")
+            groups_str = form_data.get("groups", "").strip()
+            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
 
             if 0 <= idx < len(keywords) and keyword:
                 item = keywords[idx]
                 item["keyword"] = keyword
+                item["mode"] = mode
+                item["groups"] = groups
 
                 # 更新第一个回复
                 if not item.get("entries"):
@@ -1575,6 +1637,9 @@ function viewImage(src) {
             reply_text = form_data.get("reply_text", "").strip()
             reply_images = form_data.get("reply_images", "").strip()
             is_regex = form_data.get("is_regex", "") == "on"
+            mode = form_data.get("mode", "all")
+            groups_str = form_data.get("groups", "").strip()
+            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
 
             if keyword:
                 # 构建回复
@@ -1599,8 +1664,8 @@ function viewImage(src) {
                         "keyword": keyword,
                         "is_regex": is_regex,
                         "entries": [reply],
-                        "mode": "all",
-                        "groups": []
+                        "mode": mode,
+                        "groups": groups
                     })
 
                 self.plugin._save_data()
@@ -1611,11 +1676,16 @@ function viewImage(src) {
             reply_text = form_data.get("reply_text", "").strip()
             reply_images = form_data.get("reply_images", "").strip()
             is_regex = form_data.get("is_regex", "") == "on"
+            mode = form_data.get("mode", "all")
+            groups_str = form_data.get("groups", "").strip()
+            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
 
             if 0 <= idx < len(detects) and keyword:
                 item = detects[idx]
                 item["keyword"] = keyword
                 item["is_regex"] = is_regex
+                item["mode"] = mode
+                item["groups"] = groups
 
                 # 更新第一个回复
                 if not item.get("entries"):
