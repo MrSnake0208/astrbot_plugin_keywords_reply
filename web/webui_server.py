@@ -976,11 +976,11 @@ class WebUIServer:
             if 0 <= idx < len(keywords):
                 item = keywords[idx]
                 keyword = item.get("keyword", "")
-                replies = item.get("replies", [])
+                entries = item.get("entries", [])
                 reply_text = ""
                 reply_images = ""
-                if replies:
-                    first_reply = replies[0]
+                if entries:
+                    first_reply = entries[0]
                     reply_text = first_reply.get("text", "")
                     images = first_reply.get("images", [])
                     reply_images = ", ".join([img.get("path", "") for img in images if img.get("path")])
@@ -1043,15 +1043,15 @@ function doSearch() {{
                 content += '<thead><tr><th>序号</th><th>关键词</th><th>回复数</th><th>群聊限制</th><th>操作</th></tr></thead><tbody>'
                 for idx, item in filtered:
                     keyword = item.get("keyword", "")
-                    replies = item.get("replies", [])
-                    reply_count = len(replies)
+                    entries = item.get("entries", [])
+                    reply_count = len(entries)
 
                     # 群聊限制
-                    group_mode = item.get("group_mode", "all")
+                    mode = item.get("mode", "all")
                     groups = item.get("groups", [])
-                    if group_mode == "all":
+                    if mode == "all":
                         group_display = '<span class="tag tag-secondary">所有群聊</span>'
-                    elif group_mode == "whitelist":
+                    elif mode == "whitelist":
                         group_display = f'<span class="tag">白名单 ({len(groups)}个)</span>'
                     else:
                         group_display = f'<span class="tag" style="background: var(--danger)">黑名单 ({len(groups)}个)</span>'
@@ -1137,11 +1137,11 @@ function doSearch() {{
                 item = detects[idx]
                 keyword = item.get("keyword", "")
                 is_regex = item.get("is_regex", False)
-                replies = item.get("replies", [])
+                entries = item.get("entries", [])
                 reply_text = ""
                 reply_images = ""
-                if replies:
-                    first_reply = replies[0]
+                if entries:
+                    first_reply = entries[0]
                     reply_text = first_reply.get("text", "")
                     images = first_reply.get("images", [])
                     reply_images = ", ".join([img.get("path", "") for img in images if img.get("path")])
@@ -1211,17 +1211,17 @@ function doSearch() {{
                 for idx, item in filtered:
                     keyword = item.get("keyword", "")
                     is_regex = item.get("is_regex", False)
-                    replies = item.get("replies", [])
-                    reply_count = len(replies)
+                    entries = item.get("entries", [])
+                    reply_count = len(entries)
 
                     type_display = '<span class="tag">正则</span>' if is_regex else '<span class="tag tag-secondary">普通</span>'
 
                     # 群聊限制
-                    group_mode = item.get("group_mode", "all")
+                    mode = item.get("mode", "all")
                     groups = item.get("groups", [])
-                    if group_mode == "all":
+                    if mode == "all":
                         group_display = '<span class="tag tag-secondary">所有群聊</span>'
-                    elif group_mode == "whitelist":
+                    elif mode == "whitelist":
                         group_display = f'<span class="tag">白名单 ({len(groups)}个)</span>'
                     else:
                         group_display = f'<span class="tag" style="background: var(--danger)">黑名单 ({len(groups)}个)</span>'
@@ -1510,12 +1510,12 @@ function viewImage(src) {
                         break
 
                 if existing:
-                    existing.setdefault("replies", []).append(reply)
+                    existing.setdefault("entries", []).append(reply)
                 else:
                     keywords.append({
                         "keyword": keyword,
-                        "replies": [reply],
-                        "group_mode": "all",
+                        "entries": [reply],
+                        "mode": "all",
                         "groups": []
                     })
 
@@ -1532,18 +1532,18 @@ function viewImage(src) {
                 item["keyword"] = keyword
 
                 # 更新第一个回复
-                if not item.get("replies"):
-                    item["replies"] = []
-                if not item["replies"]:
-                    item["replies"].append({"text": "", "images": []})
+                if not item.get("entries"):
+                    item["entries"] = []
+                if not item["entries"]:
+                    item["entries"].append({"text": "", "images": []})
 
-                item["replies"][0]["text"] = reply_text
-                item["replies"][0]["images"] = []
+                item["entries"][0]["text"] = reply_text
+                item["entries"][0]["images"] = []
                 if reply_images:
                     for img_name in reply_images.split(","):
                         img_name = img_name.strip()
                         if img_name:
-                            item["replies"][0]["images"].append({"path": img_name})
+                            item["entries"][0]["images"].append({"path": img_name})
 
                 self.plugin._save_data()
 
@@ -1593,13 +1593,13 @@ function viewImage(src) {
                         break
 
                 if existing:
-                    existing.setdefault("replies", []).append(reply)
+                    existing.setdefault("entries", []).append(reply)
                 else:
                     detects.append({
                         "keyword": keyword,
                         "is_regex": is_regex,
-                        "replies": [reply],
-                        "group_mode": "all",
+                        "entries": [reply],
+                        "mode": "all",
                         "groups": []
                     })
 
@@ -1618,18 +1618,18 @@ function viewImage(src) {
                 item["is_regex"] = is_regex
 
                 # 更新第一个回复
-                if not item.get("replies"):
-                    item["replies"] = []
-                if not item["replies"]:
-                    item["replies"].append({"text": "", "images": []})
+                if not item.get("entries"):
+                    item["entries"] = []
+                if not item["entries"]:
+                    item["entries"].append({"text": "", "images": []})
 
-                item["replies"][0]["text"] = reply_text
-                item["replies"][0]["images"] = []
+                item["entries"][0]["text"] = reply_text
+                item["entries"][0]["images"] = []
                 if reply_images:
                     for img_name in reply_images.split(","):
                         img_name = img_name.strip()
                         if img_name:
-                            item["replies"][0]["images"].append({"path": img_name})
+                            item["entries"][0]["images"].append({"path": img_name})
 
                 self.plugin._save_data()
 
