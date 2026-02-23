@@ -74,14 +74,14 @@ class AutoDetectModule:
                             continue
                 
                 logger.info(f"检测词触发: {cfg['keyword']} (来自: {event.get_sender_id()})")
-                if not cfg["entries"]:
+                if not cfg.get("entries"):
                     continue
                 
                 # 更新最后触发时间（如果不是跳过冷却的情况）
                 if cooldown > 0 and not skip_cooldown:
                     self._last_triggered[session_id] = now
                 
-                entry = random.choice(cfg["entries"])
+                entry = random.choice(cfg.get("entries", []))
                 return self.plugin._get_reply_result(event, entry, use_quote=True)
         return None
 
@@ -447,7 +447,7 @@ class AutoDetectModule:
                             groups_str = f" [白名单:{','.join(groups)}]"
                 
                 res += f"{i}. {cfg['keyword']}{regex_str}{groups_str}\n"
-                for j, entry in enumerate(cfg["entries"], 1):
+                for j, entry in enumerate(cfg.get("entries", []), 1):
                     imgs_str = "[图片]" * len(entry.get("images", []))
                     content = f"{entry.get('text', '')}{imgs_str}"
                     res += f"  └─ {j}. {content[:50]}{'...' if len(content) > 50 else ''}\n"

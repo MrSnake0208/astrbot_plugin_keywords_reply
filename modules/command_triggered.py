@@ -58,9 +58,9 @@ class CommandTriggeredModule:
                             continue
                 
                 logger.info(f"关键词触发: {potential_cmd} (来自: {event.get_sender_id()})")
-                if not cfg["entries"]:
+                if not cfg.get("entries"):
                     return None
-                entry = random.choice(cfg["entries"])
+                entry = random.choice(cfg.get("entries", []))
                 return self.plugin._get_reply_result(event, entry, use_quote=True)
         return None
 
@@ -405,7 +405,7 @@ class CommandTriggeredModule:
                             groups_str = f" [白名单:{','.join(groups)}]"
                 
                 res += f"{i}. {cfg['keyword']}{regex_str}{groups_str}\n"
-                for j, entry in enumerate(cfg["entries"], 1):
+                for j, entry in enumerate(cfg.get("entries", []), 1):
                     imgs_str = "[图片]" * len(entry.get("images", []))
                     content = f"{entry.get('text', '')}{imgs_str}"
                     res += f"  └─ {j}. {content[:50]}{'...' if len(content) > 50 else ''}\n"
