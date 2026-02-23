@@ -8,6 +8,30 @@
             "type": "string"
         }
     },
+    "webui_enabled": {
+        "description": "启用 WebUI 管理界面",
+        "type": "bool",
+        "hint": "是否启用 WebUI 网页管理界面",
+        "default": true
+    },
+    "webui_host": {
+        "description": "WebUI 监听地址",
+        "type": "string",
+        "hint": "WebUI 服务监听地址，默认 127.0.0.1",
+        "default": "127.0.0.1"
+    },
+    "webui_port": {
+        "description": "WebUI 监听端口",
+        "type": "int",
+        "hint": "WebUI 服务监听端口，默认 8888",
+        "default": 8888
+    },
+    "webui_session_timeout": {
+        "description": "WebUI 会话超时时间(秒)",
+        "type": "int",
+        "hint": "登录会话超时时间，默认 3600 秒",
+        "default": 3600
+    },
     "quote_reply": {
         "description": "引用回复",
         "type": "bool",

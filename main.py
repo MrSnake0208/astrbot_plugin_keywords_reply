@@ -11,6 +11,7 @@ import asyncio
 
 from .modules.command_triggered import CommandTriggeredModule
 from .modules.auto_detect import AutoDetectModule
+from .web.webui_server import WebUIServer
 
 @register("astrbot_plugin_keywords_reply", "Foolllll", "支持图文回复、正则匹配关键词和灵活管理的关键词回复插件。", "v1.1.0", "https://github.com/Foolllll-J/astrbot_plugin_keywords_reply")
 class KeywordsReplyPlugin(Star):
@@ -20,12 +21,22 @@ class KeywordsReplyPlugin(Star):
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_keywords_reply")
         self.image_dir = os.path.join(self.data_dir, "images")
         self.data_file = os.path.join(self.data_dir, "keywords.json")
-        
+
         os.makedirs(self.image_dir, exist_ok=True)
-        
+
         self.data = self._load_data()
         self.cmd_module = CommandTriggeredModule(self)
         self.detect_module = AutoDetectModule(self)
+
+        # WebUI 服务器
+        self.webui = None
+        if self.config.get("webui_enabled", True):
+            self.webui = WebUIServer(
+                self,
+                host=self.config.get("webui_host", "127.0.0.1"),
+                port=self.config.get("webui_port", 8888),
+                session_timeout=self.config.get("webui_session_timeout", 3600)
+            )
         
     def _load_data(self):
         if os.path.exists(self.data_file):
@@ -130,6 +141,41 @@ class KeywordsReplyPlugin(Star):
         except Exception as e:
             logger.error(f"构建回复结果失败: {e}", exc_info=True)
             return None
+
+    async def initialize(self):
+        """初始化插件，启动 WebUI 服务器"""
+        if self.webui:
+            await self.webui.start()
+
+    async def terminate(self):
+        """终止插件，停止 WebUI 服务器"""
+        if self.webui:
+            await self.webui.stop()
+
+    @filter.command("设置WebUI密码")
+    async def set_webui_password_cmd(self, event: AstrMessageEvent):
+        """设置 WebUI 管理密码。用法: /设置WebUI密码 <新密码>"""
+        if not self._is_admin(event):
+            yield event.plain_result("只有管理员可以设置 WebUI 密码。")
+            return
+
+        msg = event.message_str.strip()
+        parts = msg.split(maxsplit=1)
+
+        if len(parts) < 2:
+            yield event.plain_result("用法: /设置WebUI密码 <新密码>\n密码长度至少6位。")
+            return
+
+        password = parts[1].strip()
+
+        if len(password) < 6:
+            yield event.plain_result("密码长度至少6位。")
+            return
+
+        if self.webui and self.webui.set_password(password):
+            yield event.plain_result("WebUI 密码设置成功！")
+        else:
+            yield event.plain_result("密码设置失败，请检查日志。")
 
     def _is_safe_regex(self, pattern: str) -> bool:
         dangerous_patterns = [
