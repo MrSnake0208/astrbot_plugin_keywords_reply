@@ -27,6 +27,7 @@ class KeywordsReplyPlugin(Star):
         self.data = self._load_data()
         self.cmd_module = CommandTriggeredModule(self)
         self.detect_module = AutoDetectModule(self)
+        self.logger = logger  # 添加 logger 属性供 WebUI 使用
 
         # WebUI 服务器
         self.webui = None
