@@ -49,11 +49,11 @@ class CommandTriggeredModule:
                 mode = cfg.get("mode", "whitelist")
                 groups = cfg.get("groups", [])
                 
-                if group_id:
+                if group_id and mode != "all":
                     if mode == "whitelist":
                         if group_id not in groups:
                             continue
-                    else: # blacklist
+                    elif mode == "blacklist":
                         if group_id in groups:
                             continue
                 
