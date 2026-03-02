@@ -20,15 +20,16 @@ class CommandTriggeredModule:
             
         if is_regex:
             try:
-                return re.fullmatch(keyword, text, flags)
+                match = re.fullmatch(keyword, text, flags)
+                return bool(match), match
             except Exception as e:
                 logger.error(f"正则表达式匹配错误 (关键词: {keyword}): {e}")
-                return False
+                return False, None
         else:
             if not case_sensitive:
                 text = text.lower()
                 keyword = keyword.lower()
-            return text == keyword
+            return text == keyword, None
 
     async def handle_message(self, event: AstrMessageEvent):
         if not event.is_at_or_wake_command:
@@ -42,7 +43,8 @@ class CommandTriggeredModule:
         group_id = event.get_group_id()
         
         for cfg in self.plugin.data[self.data_key]:
-            if self._match_keyword(potential_cmd, cfg):
+            matched, regex_match = self._match_keyword(potential_cmd, cfg)
+            if matched:
                 if not cfg.get("enabled", True):
                     continue
                 
@@ -61,7 +63,22 @@ class CommandTriggeredModule:
                 if not cfg.get("entries"):
                     return None
                 entry = random.choice(cfg.get("entries", []))
-                return self.plugin._get_reply_result(event, entry, use_quote=True)
+                reply_entry = entry.copy()
+
+                # 正则匹配时，将第一捕获组替换到回复文本中的 XX 占位符。
+                captured = ""
+                if regex_match:
+                    try:
+                        group1 = regex_match.group(1)
+                        if group1:
+                            captured = group1
+                    except IndexError:
+                        captured = ""
+
+                if captured and reply_entry.get("text"):
+                    reply_entry["text"] = reply_entry["text"].replace("XX", captured)
+
+                return self.plugin._get_reply_result(event, reply_entry, use_quote=True)
         return None
 
     def _find_indices(self, param: str) -> list[int]:
