@@ -247,6 +247,69 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             background: var(--glass);
         }}
 
+        /* 回复管理表格 */
+        .reply-table {{
+            table-layout: fixed;
+            min-width: 860px;
+        }}
+
+        .reply-table th:nth-child(1),
+        .reply-table td:nth-child(1) {{
+            width: 60px;
+            white-space: nowrap;
+        }}
+
+        .reply-table th:nth-child(2),
+        .reply-table td:nth-child(2) {{
+            width: 240px;
+        }}
+
+        .reply-preview-cell {{
+            vertical-align: top;
+        }}
+
+        .reply-preview-compact {{
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: 0;
+        }}
+
+        .reply-preview-text {{
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text-primary);
+        }}
+
+        .reply-preview-full {{
+            display: none;
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--glass);
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }}
+
+        .reply-preview-cell.expanded .reply-preview-full {{
+            display: block;
+        }}
+
+        .reply-editor textarea {{
+            min-height: 160px;
+        }}
+
+        .reply-actions {{
+            flex-wrap: wrap;
+        }}
+
         /* 表单样式 */
         .form-group {{
             margin-bottom: 1.5rem;
@@ -513,6 +576,24 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             th, td {{
                 padding: 0.75rem 0.5rem;
             }}
+
+            .reply-table {{
+                min-width: 760px;
+            }}
+
+            .reply-table th:nth-child(1),
+            .reply-table td:nth-child(1) {{
+                width: 54px;
+            }}
+
+            .reply-table th:nth-child(2),
+            .reply-table td:nth-child(2) {{
+                width: 170px;
+            }}
+
+            .reply-editor textarea {{
+                min-height: 140px;
+            }}
         }}
 
         /* 工具栏 */
@@ -612,6 +693,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
             html.setAttribute('data-theme', newTheme);
             localStorage.setItem('theme', newTheme);
+        }}
+
+        function toggleReplyPreview(button) {{
+            const cell = button.closest('.reply-preview-cell');
+            if (!cell) return;
+            const expanded = cell.classList.toggle('expanded');
+            button.textContent = expanded ? '收起' : '展开';
         }}
 
         // 加载保存的主题
@@ -939,6 +1027,19 @@ class WebUIServer:
             return f"{text or '(无文本)'} [图片:{image_count}]"
         return text or "(空回复)"
 
+    def _entry_full_preview(self, entry: dict) -> str:
+        """构建可展开的完整回复预览文本"""
+        raw_text = entry.get("text", "")
+        text = raw_text if isinstance(raw_text, str) else str(raw_text)
+        text = text.strip()
+        image_count = len(entry.get("images", []))
+
+        if image_count:
+            if text:
+                return f"{text}\n[图片:{image_count}]"
+            return f"(无文本)\n[图片:{image_count}]"
+        return text or "(空回复)"
+
     def _is_regex_enabled(self, item: dict) -> bool:
         """兼容读取 regex / is_regex"""
         return bool(item.get("regex", item.get("is_regex", False)))
@@ -1115,28 +1216,35 @@ class WebUIServer:
     <div class="card-title">回复管理</div>
 '''
                 if entries:
-                    content += '<div class="table-container"><table>'
+                    content += '<div class="table-container"><table class="reply-table">'
                     content += '<thead><tr><th>序号</th><th>预览</th><th>编辑</th></tr></thead><tbody>'
                     for reply_idx, entry in enumerate(entries):
                         entry_text, entry_images = self._entry_to_form_data(entry)
                         preview = self._escape_html(self._entry_preview(entry))
+                        full_preview = self._escape_html(self._entry_full_preview(entry))
                         content += f'''
 <tr>
     <td>{reply_idx + 1}</td>
-    <td>{preview}</td>
+    <td class="reply-preview-cell">
+        <div class="reply-preview-compact">
+            <span class="reply-preview-text" title="{preview}">{preview}</span>
+            <button type="button" class="btn btn-sm btn-secondary preview-toggle" onclick="toggleReplyPreview(this)">展开</button>
+        </div>
+        <div class="reply-preview-full">{full_preview}</div>
+    </td>
     <td>
         <form method="post" action="/api/keywords" style="margin-bottom: 0.5rem;">
             <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
             <input type="hidden" name="action" value="edit_entry">
             <input type="hidden" name="idx" value="{idx}">
             <input type="hidden" name="reply_idx" value="{reply_idx}">
-            <div class="form-group" style="margin-bottom: 0.5rem;">
-                <textarea name="reply_text" rows="3" placeholder="回复文本内容">{self._escape_html(entry_text)}</textarea>
+            <div class="form-group reply-editor" style="margin-bottom: 0.5rem;">
+                <textarea name="reply_text" rows="6" placeholder="回复文本内容">{self._escape_html(entry_text)}</textarea>
             </div>
             <div class="form-group" style="margin-bottom: 0.5rem;">
                 <input type="text" name="reply_images" value="{self._escape_html(entry_images)}" placeholder="图片文件名，多个用逗号分隔">
             </div>
-            <div class="actions">
+            <div class="actions reply-actions">
                 <button type="submit" class="btn btn-sm btn-primary">保存该回复</button>
             </div>
         </form>
@@ -1362,28 +1470,35 @@ function doSearch() {{
     <div class="card-title">回复管理</div>
 '''
                 if entries:
-                    content += '<div class="table-container"><table>'
+                    content += '<div class="table-container"><table class="reply-table">'
                     content += '<thead><tr><th>序号</th><th>预览</th><th>编辑</th></tr></thead><tbody>'
                     for reply_idx, entry in enumerate(entries):
                         entry_text, entry_images = self._entry_to_form_data(entry)
                         preview = self._escape_html(self._entry_preview(entry))
+                        full_preview = self._escape_html(self._entry_full_preview(entry))
                         content += f'''
 <tr>
     <td>{reply_idx + 1}</td>
-    <td>{preview}</td>
+    <td class="reply-preview-cell">
+        <div class="reply-preview-compact">
+            <span class="reply-preview-text" title="{preview}">{preview}</span>
+            <button type="button" class="btn btn-sm btn-secondary preview-toggle" onclick="toggleReplyPreview(this)">展开</button>
+        </div>
+        <div class="reply-preview-full">{full_preview}</div>
+    </td>
     <td>
         <form method="post" action="/api/detects" style="margin-bottom: 0.5rem;">
             <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
             <input type="hidden" name="action" value="edit_entry">
             <input type="hidden" name="idx" value="{idx}">
             <input type="hidden" name="reply_idx" value="{reply_idx}">
-            <div class="form-group" style="margin-bottom: 0.5rem;">
-                <textarea name="reply_text" rows="3" placeholder="回复文本内容">{self._escape_html(entry_text)}</textarea>
+            <div class="form-group reply-editor" style="margin-bottom: 0.5rem;">
+                <textarea name="reply_text" rows="6" placeholder="回复文本内容">{self._escape_html(entry_text)}</textarea>
             </div>
             <div class="form-group" style="margin-bottom: 0.5rem;">
                 <input type="text" name="reply_images" value="{self._escape_html(entry_images)}" placeholder="图片文件名，多个用逗号分隔">
             </div>
-            <div class="actions">
+            <div class="actions reply-actions">
                 <button type="submit" class="btn btn-sm btn-primary">保存该回复</button>
             </div>
         </form>
