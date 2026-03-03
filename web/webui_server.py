@@ -856,6 +856,93 @@ class WebUIServer:
                 .replace('>', '&gt;')
                 .replace('"', '&quot;'))
 
+    def _safe_int(self, value, default: int = -1) -> int:
+        """安全解析整数"""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _parse_groups(self, groups_str: str) -> list:
+        """解析群号列表"""
+        return [g.strip() for g in (groups_str or "").split(",") if g.strip()]
+
+    def _parse_reply_images(self, reply_images: str) -> list:
+        """解析回复图片文件名列表"""
+        images = []
+        for img_name in (reply_images or "").split(","):
+            img_name = img_name.strip()
+            if img_name:
+                images.append({"path": img_name})
+        return images
+
+    def _build_reply_entry(self, reply_text: str, reply_images: str) -> dict:
+        """构建统一回复结构"""
+        return {
+            "text": (reply_text or "").strip(),
+            "images": self._parse_reply_images(reply_images)
+        }
+
+    def _entry_is_empty(self, entry: dict) -> bool:
+        """判断回复是否为空"""
+        return not entry.get("text") and not entry.get("images")
+
+    def _ensure_entries(self, item: dict) -> list:
+        """确保 entries 为兼容结构"""
+        raw_entries = item.get("entries", [])
+        if not isinstance(raw_entries, list):
+            raw_entries = []
+
+        normalized = []
+        for raw in raw_entries:
+            if isinstance(raw, dict):
+                text = raw.get("text", "")
+                images = raw.get("images", [])
+            else:
+                text = str(raw)
+                images = []
+
+            if not isinstance(text, str):
+                text = str(text)
+            if not isinstance(images, list):
+                images = []
+
+            cleaned_images = []
+            for img in images:
+                if isinstance(img, dict):
+                    if img.get("path"):
+                        cleaned_images.append({"path": img.get("path")})
+                    elif img.get("url"):
+                        cleaned_images.append({"url": img.get("url")})
+
+            normalized.append({"text": text, "images": cleaned_images})
+
+        item["entries"] = normalized
+        return normalized
+
+    def _entry_to_form_data(self, entry: dict) -> tuple[str, str]:
+        """将 entry 转换成表单文本"""
+        text = entry.get("text", "") if isinstance(entry.get("text", ""), str) else str(entry.get("text", ""))
+        image_names = []
+        for img in entry.get("images", []):
+            if isinstance(img, dict) and img.get("path"):
+                image_names.append(img["path"])
+        return text, ", ".join(image_names)
+
+    def _entry_preview(self, entry: dict, max_len: int = 40) -> str:
+        """构建回复预览文本"""
+        text = entry.get("text", "").replace("\n", " ").strip()
+        if len(text) > max_len:
+            text = text[:max_len] + "..."
+        image_count = len(entry.get("images", []))
+        if image_count:
+            return f"{text or '(无文本)'} [图片:{image_count}]"
+        return text or "(空回复)"
+
+    def _is_regex_enabled(self, item: dict) -> bool:
+        """兼容读取 regex / is_regex"""
+        return bool(item.get("regex", item.get("is_regex", False)))
+
     def _render_page(self, title: str, content: str) -> str:
         """渲染完整页面"""
         return HTML_TEMPLATE.format(title=title, content=content)
@@ -984,40 +1071,25 @@ class WebUIServer:
 '''.format(csrf_token=self._generate_csrf_token())
         elif action == "edit":
             # 编辑关键词表单
-            idx = int(query_params.get("idx", -1))
+            idx = self._safe_int(query_params.get("idx", -1), -1)
             if 0 <= idx < len(keywords):
                 item = keywords[idx]
                 keyword = item.get("keyword", "")
-                entries = item.get("entries", [])
-                reply_text = ""
-                reply_images = ""
+                entries = self._ensure_entries(item)
                 mode = item.get("mode", "all")
                 groups = item.get("groups", [])
                 groups_str = ", ".join(str(g) for g in groups) if groups else ""
-                if entries:
-                    first_reply = entries[0]
-                    reply_text = first_reply.get("text", "")
-                    images = first_reply.get("images", [])
-                    reply_images = ", ".join([img.get("path", "") for img in images if img.get("path")])
 
                 content += f'''
 <h1 style="margin-bottom: 1.5rem;">编辑关键词</h1>
 <div class="card">
     <form method="post" action="/api/keywords">
         <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
-        <input type="hidden" name="action" value="edit">
+        <input type="hidden" name="action" value="edit_meta">
         <input type="hidden" name="idx" value="{idx}">
         <div class="form-group">
             <label>关键词</label>
             <input type="text" name="keyword" value="{self._escape_html(keyword)}" required>
-        </div>
-        <div class="form-group">
-            <label>回复内容</label>
-            <textarea name="reply_text">{self._escape_html(reply_text)}</textarea>
-        </div>
-        <div class="form-group">
-            <label>图片文件名（可选，多个用逗号分隔）</label>
-            <input type="text" name="reply_images" value="{self._escape_html(reply_images)}">
         </div>
         <div class="form-group">
             <label>群聊限制模式</label>
@@ -1035,6 +1107,74 @@ class WebUIServer:
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="/keywords" class="btn btn-secondary">取消</a>
         </div>
+    </form>
+</div>
+'''
+                content += '''
+<div class="card">
+    <div class="card-title">回复管理</div>
+'''
+                if entries:
+                    content += '<div class="table-container"><table>'
+                    content += '<thead><tr><th>序号</th><th>预览</th><th>编辑</th></tr></thead><tbody>'
+                    for reply_idx, entry in enumerate(entries):
+                        entry_text, entry_images = self._entry_to_form_data(entry)
+                        preview = self._escape_html(self._entry_preview(entry))
+                        content += f'''
+<tr>
+    <td>{reply_idx + 1}</td>
+    <td>{preview}</td>
+    <td>
+        <form method="post" action="/api/keywords" style="margin-bottom: 0.5rem;">
+            <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
+            <input type="hidden" name="action" value="edit_entry">
+            <input type="hidden" name="idx" value="{idx}">
+            <input type="hidden" name="reply_idx" value="{reply_idx}">
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+                <textarea name="reply_text" rows="3" placeholder="回复文本内容">{self._escape_html(entry_text)}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+                <input type="text" name="reply_images" value="{self._escape_html(entry_images)}" placeholder="图片文件名，多个用逗号分隔">
+            </div>
+            <div class="actions">
+                <button type="submit" class="btn btn-sm btn-primary">保存该回复</button>
+            </div>
+        </form>
+        <form method="post" action="/api/keywords" onsubmit="return confirm('确定删除这条回复？')">
+            <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
+            <input type="hidden" name="action" value="delete_entry">
+            <input type="hidden" name="idx" value="{idx}">
+            <input type="hidden" name="reply_idx" value="{reply_idx}">
+            <button type="submit" class="btn btn-sm btn-danger">删除该回复</button>
+        </form>
+    </td>
+</tr>
+'''
+                    content += '</tbody></table></div>'
+                else:
+                    content += '''
+<div class="empty-state" style="padding: 1rem;">
+    <p>暂无回复，先新增一条回复。</p>
+</div>
+'''
+                content += '</div>'
+
+                content += f'''
+<div class="card">
+    <div class="card-title">新增回复</div>
+    <form method="post" action="/api/keywords">
+        <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
+        <input type="hidden" name="action" value="add_entry">
+        <input type="hidden" name="idx" value="{idx}">
+        <div class="form-group">
+            <label>回复内容</label>
+            <textarea name="reply_text" placeholder="回复文本内容"></textarea>
+        </div>
+        <div class="form-group">
+            <label>图片文件名（可选，多个用逗号分隔）</label>
+            <input type="text" name="reply_images" placeholder="如: image1.jpg, image2.jpg">
+        </div>
+        <button type="submit" class="btn btn-primary">新增回复</button>
     </form>
 </div>
 '''
@@ -1171,29 +1311,22 @@ function doSearch() {{
 '''.format(csrf_token=self._generate_csrf_token())
         elif action == "edit":
             # 编辑检测词表单
-            idx = int(query_params.get("idx", -1))
+            idx = self._safe_int(query_params.get("idx", -1), -1)
             if 0 <= idx < len(detects):
                 item = detects[idx]
                 keyword = item.get("keyword", "")
-                is_regex = item.get("is_regex", False)
-                entries = item.get("entries", [])
-                reply_text = ""
-                reply_images = ""
+                is_regex = self._is_regex_enabled(item)
+                entries = self._ensure_entries(item)
                 mode = item.get("mode", "all")
                 groups = item.get("groups", [])
                 groups_str = ", ".join(str(g) for g in groups) if groups else ""
-                if entries:
-                    first_reply = entries[0]
-                    reply_text = first_reply.get("text", "")
-                    images = first_reply.get("images", [])
-                    reply_images = ", ".join([img.get("path", "") for img in images if img.get("path")])
 
                 content += f'''
 <h1 style="margin-bottom: 1.5rem;">编辑检测词</h1>
 <div class="card">
     <form method="post" action="/api/detects">
         <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
-        <input type="hidden" name="action" value="edit">
+        <input type="hidden" name="action" value="edit_meta">
         <input type="hidden" name="idx" value="{idx}">
         <div class="form-group">
             <label>检测词</label>
@@ -1204,14 +1337,6 @@ function doSearch() {{
                 <input type="checkbox" name="is_regex" {"checked" if is_regex else ""} style="width: auto; margin-right: 0.5rem;">
                 使用正则匹配
             </label>
-        </div>
-        <div class="form-group">
-            <label>回复内容</label>
-            <textarea name="reply_text">{self._escape_html(reply_text)}</textarea>
-        </div>
-        <div class="form-group">
-            <label>图片文件名（可选，多个用逗号分隔）</label>
-            <input type="text" name="reply_images" value="{self._escape_html(reply_images)}">
         </div>
         <div class="form-group">
             <label>群聊限制模式</label>
@@ -1229,6 +1354,74 @@ function doSearch() {{
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="/detects" class="btn btn-secondary">取消</a>
         </div>
+    </form>
+</div>
+'''
+                content += '''
+<div class="card">
+    <div class="card-title">回复管理</div>
+'''
+                if entries:
+                    content += '<div class="table-container"><table>'
+                    content += '<thead><tr><th>序号</th><th>预览</th><th>编辑</th></tr></thead><tbody>'
+                    for reply_idx, entry in enumerate(entries):
+                        entry_text, entry_images = self._entry_to_form_data(entry)
+                        preview = self._escape_html(self._entry_preview(entry))
+                        content += f'''
+<tr>
+    <td>{reply_idx + 1}</td>
+    <td>{preview}</td>
+    <td>
+        <form method="post" action="/api/detects" style="margin-bottom: 0.5rem;">
+            <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
+            <input type="hidden" name="action" value="edit_entry">
+            <input type="hidden" name="idx" value="{idx}">
+            <input type="hidden" name="reply_idx" value="{reply_idx}">
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+                <textarea name="reply_text" rows="3" placeholder="回复文本内容">{self._escape_html(entry_text)}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+                <input type="text" name="reply_images" value="{self._escape_html(entry_images)}" placeholder="图片文件名，多个用逗号分隔">
+            </div>
+            <div class="actions">
+                <button type="submit" class="btn btn-sm btn-primary">保存该回复</button>
+            </div>
+        </form>
+        <form method="post" action="/api/detects" onsubmit="return confirm('确定删除这条回复？')">
+            <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
+            <input type="hidden" name="action" value="delete_entry">
+            <input type="hidden" name="idx" value="{idx}">
+            <input type="hidden" name="reply_idx" value="{reply_idx}">
+            <button type="submit" class="btn btn-sm btn-danger">删除该回复</button>
+        </form>
+    </td>
+</tr>
+'''
+                    content += '</tbody></table></div>'
+                else:
+                    content += '''
+<div class="empty-state" style="padding: 1rem;">
+    <p>暂无回复，先新增一条回复。</p>
+</div>
+'''
+                content += '</div>'
+
+                content += f'''
+<div class="card">
+    <div class="card-title">新增回复</div>
+    <form method="post" action="/api/detects">
+        <input type="hidden" name="csrf_token" value="{self._generate_csrf_token()}">
+        <input type="hidden" name="action" value="add_entry">
+        <input type="hidden" name="idx" value="{idx}">
+        <div class="form-group">
+            <label>回复内容</label>
+            <textarea name="reply_text" placeholder="回复文本内容"></textarea>
+        </div>
+        <div class="form-group">
+            <label>图片文件名（可选，多个用逗号分隔）</label>
+            <input type="text" name="reply_images" placeholder="如: image1.jpg, image2.jpg">
+        </div>
+        <button type="submit" class="btn btn-primary">新增回复</button>
     </form>
 </div>
 '''
@@ -1264,7 +1457,7 @@ function doSearch() {{
                 content += '<thead><tr><th>序号</th><th>检测词</th><th>类型</th><th>回复数</th><th>群聊限制</th><th>操作</th></tr></thead><tbody>'
                 for idx, item in filtered:
                     keyword = item.get("keyword", "")
-                    is_regex = item.get("is_regex", False)
+                    is_regex = self._is_regex_enabled(item)
                     entries = item.get("entries", [])
                     reply_count = len(entries)
 
@@ -1541,23 +1734,20 @@ function viewImage(src) {
 
         data = self.plugin.data
         keywords = data.setdefault("command_triggered", [])
+        redirect_path = "/keywords"
+        data_changed = False
 
         if action == "add":
             keyword = form_data.get("keyword", "").strip()
             reply_text = form_data.get("reply_text", "").strip()
             reply_images = form_data.get("reply_images", "").strip()
             mode = form_data.get("mode", "all")
-            groups_str = form_data.get("groups", "").strip()
-            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
+            groups = self._parse_groups(form_data.get("groups", "").strip())
 
             if keyword:
-                # 构建回复
-                reply = {"text": reply_text, "images": []}
-                if reply_images:
-                    for img_name in reply_images.split(","):
-                        img_name = img_name.strip()
-                        if img_name:
-                            reply["images"].append({"path": img_name})
+                reply = self._build_reply_entry(reply_text, reply_images)
+                if self._entry_is_empty(reply):
+                    return self._redirect_response(redirect_path)
 
                 # 检查是否已存在
                 existing = None
@@ -1567,7 +1757,7 @@ function viewImage(src) {
                         break
 
                 if existing:
-                    existing.setdefault("entries", []).append(reply)
+                    self._ensure_entries(existing).append(reply)
                 else:
                     keywords.append({
                         "keyword": keyword,
@@ -1576,46 +1766,67 @@ function viewImage(src) {
                         "groups": groups
                     })
 
-                self.plugin._save_data()
-
-        elif action == "edit":
-            idx = int(form_data.get("idx", -1))
-            keyword = form_data.get("keyword", "").strip()
-            reply_text = form_data.get("reply_text", "").strip()
-            reply_images = form_data.get("reply_images", "").strip()
-            mode = form_data.get("mode", "all")
-            groups_str = form_data.get("groups", "").strip()
-            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
-
-            if 0 <= idx < len(keywords) and keyword:
-                item = keywords[idx]
-                item["keyword"] = keyword
-                item["mode"] = mode
-                item["groups"] = groups
-
-                # 更新第一个回复
-                if not item.get("entries"):
-                    item["entries"] = []
-                if not item["entries"]:
-                    item["entries"].append({"text": "", "images": []})
-
-                item["entries"][0]["text"] = reply_text
-                item["entries"][0]["images"] = []
-                if reply_images:
-                    for img_name in reply_images.split(","):
-                        img_name = img_name.strip()
-                        if img_name:
-                            item["entries"][0]["images"].append({"path": img_name})
-
-                self.plugin._save_data()
+                data_changed = True
 
         elif action == "delete":
-            idx = int(form_data.get("idx", -1))
+            idx = self._safe_int(form_data.get("idx", -1), -1)
             if 0 <= idx < len(keywords):
                 keywords.pop(idx)
-                self.plugin._save_data()
+                data_changed = True
 
-        return self._redirect_response("/keywords")
+        elif action in ("edit_meta", "edit", "add_entry", "edit_entry", "delete_entry"):
+            idx = self._safe_int(form_data.get("idx", -1), -1)
+            if 0 <= idx < len(keywords):
+                item = keywords[idx]
+                entries = self._ensure_entries(item)
+                redirect_path = f"/keywords?action=edit&idx={idx}"
+
+                if action in ("edit_meta", "edit"):
+                    keyword = form_data.get("keyword", "").strip()
+                    if keyword:
+                        item["keyword"] = keyword
+                        item["mode"] = form_data.get("mode", "all")
+                        item["groups"] = self._parse_groups(form_data.get("groups", "").strip())
+                        data_changed = True
+
+                if action == "edit":
+                    # 兼容旧编辑动作：更新第一个回复
+                    reply = self._build_reply_entry(
+                        form_data.get("reply_text", "").strip(),
+                        form_data.get("reply_images", "").strip()
+                    )
+                    if not self._entry_is_empty(reply):
+                        if not entries:
+                            entries.append({"text": "", "images": []})
+                        entries[0] = reply
+                        data_changed = True
+                elif action == "add_entry":
+                    reply = self._build_reply_entry(
+                        form_data.get("reply_text", "").strip(),
+                        form_data.get("reply_images", "").strip()
+                    )
+                    if not self._entry_is_empty(reply):
+                        entries.append(reply)
+                        data_changed = True
+                elif action == "edit_entry":
+                    reply_idx = self._safe_int(form_data.get("reply_idx", -1), -1)
+                    reply = self._build_reply_entry(
+                        form_data.get("reply_text", "").strip(),
+                        form_data.get("reply_images", "").strip()
+                    )
+                    if 0 <= reply_idx < len(entries) and not self._entry_is_empty(reply):
+                        entries[reply_idx] = reply
+                        data_changed = True
+                elif action == "delete_entry":
+                    reply_idx = self._safe_int(form_data.get("reply_idx", -1), -1)
+                    if 0 <= reply_idx < len(entries):
+                        entries.pop(reply_idx)
+                        data_changed = True
+
+        if data_changed:
+            self.plugin._save_data()
+
+        return self._redirect_response(redirect_path)
 
     async def _handle_detects_api(self, method: str, body: bytes) -> bytes:
         """处理检测词 API"""
@@ -1631,6 +1842,8 @@ function viewImage(src) {
 
         data = self.plugin.data
         detects = data.setdefault("auto_detect", [])
+        redirect_path = "/detects"
+        data_changed = False
 
         if action == "add":
             keyword = form_data.get("keyword", "").strip()
@@ -1638,17 +1851,12 @@ function viewImage(src) {
             reply_images = form_data.get("reply_images", "").strip()
             is_regex = form_data.get("is_regex", "") == "on"
             mode = form_data.get("mode", "all")
-            groups_str = form_data.get("groups", "").strip()
-            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
+            groups = self._parse_groups(form_data.get("groups", "").strip())
 
             if keyword:
-                # 构建回复
-                reply = {"text": reply_text, "images": []}
-                if reply_images:
-                    for img_name in reply_images.split(","):
-                        img_name = img_name.strip()
-                        if img_name:
-                            reply["images"].append({"path": img_name})
+                reply = self._build_reply_entry(reply_text, reply_images)
+                if self._entry_is_empty(reply):
+                    return self._redirect_response(redirect_path)
 
                 # 检查是否已存在
                 existing = None
@@ -1658,58 +1866,83 @@ function viewImage(src) {
                         break
 
                 if existing:
-                    existing.setdefault("entries", []).append(reply)
+                    self._ensure_entries(existing).append(reply)
+                    existing["regex"] = is_regex
+                    existing["is_regex"] = is_regex
                 else:
                     detects.append({
                         "keyword": keyword,
+                        "regex": is_regex,
                         "is_regex": is_regex,
                         "entries": [reply],
                         "mode": mode,
                         "groups": groups
                     })
 
-                self.plugin._save_data()
-
-        elif action == "edit":
-            idx = int(form_data.get("idx", -1))
-            keyword = form_data.get("keyword", "").strip()
-            reply_text = form_data.get("reply_text", "").strip()
-            reply_images = form_data.get("reply_images", "").strip()
-            is_regex = form_data.get("is_regex", "") == "on"
-            mode = form_data.get("mode", "all")
-            groups_str = form_data.get("groups", "").strip()
-            groups = [g.strip() for g in groups_str.split(",") if g.strip()]
-
-            if 0 <= idx < len(detects) and keyword:
-                item = detects[idx]
-                item["keyword"] = keyword
-                item["is_regex"] = is_regex
-                item["mode"] = mode
-                item["groups"] = groups
-
-                # 更新第一个回复
-                if not item.get("entries"):
-                    item["entries"] = []
-                if not item["entries"]:
-                    item["entries"].append({"text": "", "images": []})
-
-                item["entries"][0]["text"] = reply_text
-                item["entries"][0]["images"] = []
-                if reply_images:
-                    for img_name in reply_images.split(","):
-                        img_name = img_name.strip()
-                        if img_name:
-                            item["entries"][0]["images"].append({"path": img_name})
-
-                self.plugin._save_data()
+                data_changed = True
 
         elif action == "delete":
-            idx = int(form_data.get("idx", -1))
+            idx = self._safe_int(form_data.get("idx", -1), -1)
             if 0 <= idx < len(detects):
                 detects.pop(idx)
-                self.plugin._save_data()
+                data_changed = True
 
-        return self._redirect_response("/detects")
+        elif action in ("edit_meta", "edit", "add_entry", "edit_entry", "delete_entry"):
+            idx = self._safe_int(form_data.get("idx", -1), -1)
+            if 0 <= idx < len(detects):
+                item = detects[idx]
+                entries = self._ensure_entries(item)
+                redirect_path = f"/detects?action=edit&idx={idx}"
+
+                if action in ("edit_meta", "edit"):
+                    keyword = form_data.get("keyword", "").strip()
+                    if keyword:
+                        is_regex = form_data.get("is_regex", "") == "on"
+                        item["keyword"] = keyword
+                        item["regex"] = is_regex
+                        item["is_regex"] = is_regex
+                        item["mode"] = form_data.get("mode", "all")
+                        item["groups"] = self._parse_groups(form_data.get("groups", "").strip())
+                        data_changed = True
+
+                if action == "edit":
+                    # 兼容旧编辑动作：更新第一个回复
+                    reply = self._build_reply_entry(
+                        form_data.get("reply_text", "").strip(),
+                        form_data.get("reply_images", "").strip()
+                    )
+                    if not self._entry_is_empty(reply):
+                        if not entries:
+                            entries.append({"text": "", "images": []})
+                        entries[0] = reply
+                        data_changed = True
+                elif action == "add_entry":
+                    reply = self._build_reply_entry(
+                        form_data.get("reply_text", "").strip(),
+                        form_data.get("reply_images", "").strip()
+                    )
+                    if not self._entry_is_empty(reply):
+                        entries.append(reply)
+                        data_changed = True
+                elif action == "edit_entry":
+                    reply_idx = self._safe_int(form_data.get("reply_idx", -1), -1)
+                    reply = self._build_reply_entry(
+                        form_data.get("reply_text", "").strip(),
+                        form_data.get("reply_images", "").strip()
+                    )
+                    if 0 <= reply_idx < len(entries) and not self._entry_is_empty(reply):
+                        entries[reply_idx] = reply
+                        data_changed = True
+                elif action == "delete_entry":
+                    reply_idx = self._safe_int(form_data.get("reply_idx", -1), -1)
+                    if 0 <= reply_idx < len(entries):
+                        entries.pop(reply_idx)
+                        data_changed = True
+
+        if data_changed:
+            self.plugin._save_data()
+
+        return self._redirect_response(redirect_path)
 
     async def _handle_images_api(self, method: str, path: str, headers: dict, body: bytes) -> bytes:
         """处理图片 API"""
